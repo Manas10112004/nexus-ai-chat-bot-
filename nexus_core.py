@@ -9,7 +9,7 @@ import seaborn as sns
 from io import StringIO
 from langchain_groq import ChatGroq
 from langchain_community.tools.tavily_search import TavilySearchResults
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing import TypedDict, Annotated, Sequence
@@ -34,8 +34,10 @@ if not TAVILY_API_KEY or not GROQ_API_KEY:
 
 os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
-#MODEL_NAME = "llama-3.3-70b-versatile"
+
+# USE THE FAST MODEL (More reliable for free tier)
 MODEL_NAME = "llama-3.1-8b-instant"
+
 
 # --- 2. DATA ENGINE ---
 class DataEngine:
@@ -82,7 +84,7 @@ class DataEngine:
             if plt.get_fignums():
                 st.pyplot(plt)
                 plt.clf()
-                return f"Output:\n{result}\n[SUCCESS: Visual Chart Rendered to UI. STOP NOW.]"
+                return f"Output:\n{result}\n[SUCCESS: Chart Rendered. STOP.]"
 
             return f"Output:\n{result}" if result else "Code executed successfully."
         except Exception as e:
@@ -134,7 +136,7 @@ with st.sidebar:
 
 # --- 5. SCHEMA & TOOLS ---
 class PythonInput(BaseModel):
-    code: str = Field(description="Python code to run. Use 'df'. No plt.show().")
+    code: str = Field(description="Python code to run. ALWAYS use 'df'. NEVER load new files.")
 
 
 def python_analysis_tool(code: str):
@@ -150,7 +152,7 @@ if has_data:
     tools.append(StructuredTool.from_function(
         func=python_analysis_tool,
         name="python_analysis",
-        description="Run Python code. Use 'df'.",
+        description="Run Python code. Access data via variable 'df'.",
         args_schema=PythonInput
     ))
 
@@ -198,14 +200,14 @@ if prompt := st.chat_input("Enter command..."):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
-    # --- ANTI-LOOP PROMPT ---
+    # --- SIMPLIFIED PROMPT FOR 8B MODEL ---
     system_text = "You are Nexus."
     if has_data:
         system_text += """
-        [VISUAL MODE]
-        1. Use `plt.plot()` or `sns.heatmap()`.
-        2. DO NOT use `plt.show()`.
-        3. CRITICAL: Once the tool says "[SUCCESS: Visual Chart Rendered]", STOP. Do not run it again.
+        [DATA MODE]
+        1. Variable 'df' is ALREADY loaded. DO NOT read any CSVs.
+        2. To plot: `sns.heatmap(df.corr(), annot=True); plt.title('Corr')`.
+        3. DO NOT use plt.show().
         """
     else:
         system_text += " If no file, use 'tavily'."
@@ -217,8 +219,7 @@ if prompt := st.chat_input("Enter command..."):
         status_box = st.status("Thinking...", expanded=True)
         try:
             final_response = ""
-            # ✅ FIX: INCREASED RECURSION LIMIT TO 100
-            for event in app.stream({"messages": current_messages}, config={"recursion_limit": 100},
+            for event in app.stream({"messages": current_messages}, config={"recursion_limit": 50},
                                     stream_mode="values"):
                 last_msg = event["messages"][-1]
                 if hasattr(last_msg, 'tool_calls') and len(last_msg.tool_calls) > 0:
