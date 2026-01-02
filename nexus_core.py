@@ -15,7 +15,6 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from typing import TypedDict, Annotated, Sequence
 import operator
 from langchain_core.messages import BaseMessage
-# CHANGED: Import StructuredTool and pydantic for strict validation
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -76,15 +75,14 @@ class DataEngine:
         old_stdout = sys.stdout
         redirected_output = sys.stdout = StringIO()
         try:
-            # Execute code
+            plt.clf()  # Clear previous plots
             exec(code, self.scope)
             result = redirected_output.getvalue()
 
-            # Check for Plots
             if plt.get_fignums():
                 st.pyplot(plt)
                 plt.clf()
-                return f"Output:\n{result}\n[Visual Chart Rendered to UI]"
+                return f"Output:\n{result}\n[SUCCESS: Visual Chart Rendered to UI. STOP NOW.]"
 
             return f"Output:\n{result}" if result else "Code executed successfully."
         except Exception as e:
@@ -134,10 +132,9 @@ with st.sidebar:
             st.rerun()
 
 
-# --- 5. STRICT SCHEMA DEFINITION (The Fix) ---
-# We define exactly what the input looks like so the model can't mess it up
+# --- 5. SCHEMA & TOOLS ---
 class PythonInput(BaseModel):
-    code: str = Field(description="The valid Python code to execute. access dataframe with 'df'.")
+    code: str = Field(description="Python code to run. Use 'df'. No plt.show().")
 
 
 def python_analysis_tool(code: str):
@@ -150,12 +147,11 @@ tools = [tavily]
 has_data = "df" in engine.scope or "file_content" in engine.scope
 
 if has_data:
-    # Use StructuredTool to enforce the schema
     tools.append(StructuredTool.from_function(
         func=python_analysis_tool,
         name="python_analysis",
-        description="Run Python code. Use 'df' for data. Print outputs.",
-        args_schema=PythonInput  # <--- This fixes the error
+        description="Run Python code. Use 'df'.",
+        args_schema=PythonInput
     ))
 
 llm = ChatGroq(model=MODEL_NAME, temperature=0.1)
@@ -182,7 +178,7 @@ app = workflow.compile()
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
 if has_data:
-    st.info(f"📊 **Visual Analyst Ready.**")
+    st.info(f"📊 **Analyst Ready.**")
 
 history = load_history(current_sess)
 current_messages = []
@@ -202,16 +198,17 @@ if prompt := st.chat_input("Enter command..."):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
+    # --- ANTI-LOOP PROMPT ---
     system_text = "You are Nexus."
     if has_data:
         system_text += """
-        [VISUAL MODE ACTIVE]
-        - To plot: Use `plt.plot()`, `plt.bar()`, or `sns.heatmap()`.
-        - DO NOT use `plt.show()`. Just create the plot.
-        - Always use 'df' variable.
+        [VISUAL MODE]
+        1. Use `plt.plot()` or `sns.heatmap()`.
+        2. DO NOT use `plt.show()`.
+        3. CRITICAL: Once the tool says "[SUCCESS: Visual Chart Rendered]", STOP. Do not run it again.
         """
     else:
-        system_text += " If no file is loaded, use 'tavily' for web search."
+        system_text += " If no file, use 'tavily'."
 
     current_messages.append(SystemMessage(content=system_text))
     current_messages.append(HumanMessage(content=prompt))
@@ -220,7 +217,9 @@ if prompt := st.chat_input("Enter command..."):
         status_box = st.status("Thinking...", expanded=True)
         try:
             final_response = ""
-            for event in app.stream({"messages": current_messages}, stream_mode="values"):
+            # ✅ FIX: INCREASED RECURSION LIMIT TO 100
+            for event in app.stream({"messages": current_messages}, config={"recursion_limit": 100},
+                                    stream_mode="values"):
                 last_msg = event["messages"][-1]
                 if hasattr(last_msg, 'tool_calls') and len(last_msg.tool_calls) > 0:
                     for t in last_msg.tool_calls:
