@@ -35,8 +35,9 @@ if not TAVILY_API_KEY or not GROQ_API_KEY:
 os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
-# USE THE FAST MODEL (More reliable for free tier)
-MODEL_NAME = "llama-3.1-8b-instant"
+# DEFINE MODEL TIERS
+MODEL_FAST = "llama-3.1-8b-instant"  # Speed / Chat
+MODEL_SMART = "llama-3.3-70b-versatile"  # Coding / Complex Tasks
 
 
 # --- 2. DATA ENGINE ---
@@ -77,7 +78,7 @@ class DataEngine:
         old_stdout = sys.stdout
         redirected_output = sys.stdout = StringIO()
         try:
-            plt.clf()  # Clear previous plots
+            plt.clf()
             exec(code, self.scope)
             result = redirected_output.getvalue()
 
@@ -104,13 +105,25 @@ current_sess = st.session_state.current_session_id
 
 init_db()
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR & ROUTING ---
 current_theme = load_setting("theme", "🌿 Eywa (Avatar)")
 inject_theme_css(current_theme)
 theme_data = THEMES.get(current_theme, THEMES["🌿 Eywa (Avatar)"])
 
 with st.sidebar:
     st.title("⚙️ NEXUS HQ")
+
+    # 🧠 SMART MODEL SELECTOR
+    st.markdown("### 🧠 Intelligence")
+    model_choice = st.radio(
+        "Select Engine:",
+        ["Auto (Smart)", "⚡ Fast (8B)", "🧙‍♂️ Genius (70B)"],
+        index=0,
+        help="Auto uses 70B for Data Analysis and 8B for Chat."
+    )
+
+    st.divider()
+
     uploaded_file = st.file_uploader("📂 Upload File", type=None)
     if uploaded_file:
         status = engine.load_file(uploaded_file)
@@ -134,9 +147,9 @@ with st.sidebar:
             st.rerun()
 
 
-# --- 5. SCHEMA & TOOLS ---
+# --- 5. LOGIC & TOOLS ---
 class PythonInput(BaseModel):
-    code: str = Field(description="Python code to run. ALWAYS use 'df'. NEVER load new files.")
+    code: str = Field(description="Python code to run. Use 'df'.")
 
 
 def python_analysis_tool(code: str):
@@ -152,14 +165,25 @@ if has_data:
     tools.append(StructuredTool.from_function(
         func=python_analysis_tool,
         name="python_analysis",
-        description="Run Python code. Access data via variable 'df'.",
+        description="Run Python analysis.",
         args_schema=PythonInput
     ))
 
-llm = ChatGroq(model=MODEL_NAME, temperature=0.1)
+# --- ROUTING LOGIC ---
+if model_choice == "Auto (Smart)":
+    # Use 70B if we have data (needs strict coding), otherwise 8B (speed)
+    active_model = MODEL_SMART if has_data else MODEL_FAST
+elif model_choice == "⚡ Fast (8B)":
+    active_model = MODEL_FAST
+else:
+    active_model = MODEL_SMART
+
+# Initialize LLM with selected model
+llm = ChatGroq(model=active_model, temperature=0.1)
 llm_with_tools = llm.bind_tools(tools)
 
 
+# --- 6. AGENT GRAPH ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
@@ -176,11 +200,11 @@ workflow.add_conditional_edges("agent", tools_condition)
 workflow.add_edge("tools", "agent")
 app = workflow.compile()
 
-# --- 6. CHAT UI ---
+# --- 7. CHAT UI ---
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
-if has_data:
-    st.info(f"📊 **Analyst Ready.**")
+# Status Bar
+st.caption(f"🚀 **Engine Active:** {active_model} | 📂 **Data Mode:** {'ON' if has_data else 'OFF'}")
 
 history = load_history(current_sess)
 current_messages = []
@@ -200,14 +224,12 @@ if prompt := st.chat_input("Enter command..."):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
-    # --- SIMPLIFIED PROMPT FOR 8B MODEL ---
     system_text = "You are Nexus."
     if has_data:
         system_text += """
         [DATA MODE]
-        1. Variable 'df' is ALREADY loaded. DO NOT read any CSVs.
-        2. To plot: `sns.heatmap(df.corr(), annot=True); plt.title('Corr')`.
-        3. DO NOT use plt.show().
+        1. Variable 'df' is loaded.
+        2. Plotting: `plt.plot()`. NO `plt.show()`.
         """
     else:
         system_text += " If no file, use 'tavily'."
@@ -224,7 +246,7 @@ if prompt := st.chat_input("Enter command..."):
                 last_msg = event["messages"][-1]
                 if hasattr(last_msg, 'tool_calls') and len(last_msg.tool_calls) > 0:
                     for t in last_msg.tool_calls:
-                        status_box.write(f"⚙️ **Running Tool:** `{t['name']}`")
+                        status_box.write(f"⚙️ **{active_model} Using:** `{t['name']}`")
 
                 if isinstance(last_msg, AIMessage) and last_msg.content:
                     final_response = last_msg.content
@@ -236,4 +258,5 @@ if prompt := st.chat_input("Enter command..."):
             else:
                 st.error("No response.")
         except Exception as e:
+            status_box.update(label="Error", state="error")
             st.error(f"Error: {e}")
