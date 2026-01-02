@@ -35,13 +35,10 @@ if not TAVILY_API_KEY or not GROQ_API_KEY:
 os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
-# --- INTELLIGENCE TIERS (CLEANED) ---
-# ⚠️ CRITICAL UPDATE: Removed decommissioned models (Gemma, Llama 3.1 70B)
-SMART_MODELS = [
-    "llama-3.3-70b-versatile",  # 1. Flagship (Best)
-    "mixtral-8x7b-32768"  # 2. Backup (Reliable)
-]
-FAST_MODEL = "llama-3.1-8b-instant"  # Safety Net (Always Active)
+# --- INTELLIGENCE TIERS (SIMPLIFIED) ---
+# We ONLY use the two models guaranteed to be online.
+MODEL_SMART = "llama-3.3-70b-versatile"  # The Flagship
+MODEL_FAST = "llama-3.1-8b-instant"  # The Backup
 
 
 # --- 2. DATA ENGINE ---
@@ -116,7 +113,7 @@ theme_data = THEMES.get(current_theme, THEMES["🌿 Eywa (Avatar)"])
 
 with st.sidebar:
     st.title("⚙️ NEXUS HQ")
-    st.caption("Auto-Failover System: **Active**")
+    st.caption("System Status: **Online**")
 
     uploaded_file = st.file_uploader("📂 Upload File", type=None)
     if uploaded_file:
@@ -163,44 +160,48 @@ if has_data:
     ))
 
 
-# --- 6. AGENT NODE (Failover Logic) ---
+# --- 6. AGENT NODE (SIMPLIFIED FAILOVER) ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
 
 def agent_node(state):
     """
-    Tries Llama 3.3 -> Mixtral.
-    If BOTH fail, falls back to Llama 3.1-8B (Fast).
+    Attempt 1: Smart Model (Llama 3.3).
+    Attempt 2: Fast Model (Llama 3.1 8B).
     """
-    candidate_models = SMART_MODELS if has_data else [FAST_MODEL]
-    last_error = None
 
-    # 1. Try Primary Candidates
-    for model_name in candidate_models:
-        try:
-            current_llm = ChatGroq(model=model_name, temperature=0.1).bind_tools(tools)
-            response = current_llm.invoke(state["messages"])
-            return {"messages": [response]}
-        except Exception as e:
-            last_error = e
-            # Log failure but continue to next model
-            print(f"⚠️ {model_name} Failed. Trying next...")
-            continue
+    # Decide primary model
+    primary = MODEL_SMART if has_data else MODEL_FAST
 
-    # 2. EMERGENCY FALLBACK
     try:
-        # Force fallback to the FASTEST, smallest model.
-        fallback_llm = ChatGroq(model=FAST_MODEL, temperature=0.1).bind_tools(tools)
+        # ATTEMPT 1: Primary Model
+        llm = ChatGroq(model=primary, temperature=0.1).bind_tools(tools)
+        response = llm.invoke(state["messages"])
+        return {"messages": [response]}
 
-        fallback_note = AIMessage(
-            content=f"⚠️ **Note:** Smart models are busy. I'm using the **Instant (8B)** engine to answer.")
-        response = fallback_llm.invoke(state["messages"])
-        return {"messages": [fallback_note, response]}
+    except Exception as e:
+        error_msg = str(e)
+        print(f"⚠️ Primary Model Failed: {error_msg}")
 
-    except Exception as final_e:
-        return {"messages": [
-            AIMessage(content=f"❌ **System Failure:** All models offline.\nLast Error: {str(last_error)}")],
+        # ATTEMPT 2: Fallback to Fast Model
+        try:
+            fallback_llm = ChatGroq(model=MODEL_FAST, temperature=0.1).bind_tools(tools)
+
+            # Determine why we switched
+            reason = "High traffic"
+            if "decommissioned" in error_msg:
+                reason = "Model retired"
+            elif "429" in error_msg:
+                reason = "Rate limit"
+
+            warning = AIMessage(content=f"⚠️ **Note:** Primary brain unavailable ({reason}). Switched to Fast Engine.")
+            response = fallback_llm.invoke(state["messages"])
+            return {"messages": [warning, response]}
+
+        except Exception as final_e:
+            return {
+                "messages": [AIMessage(content=f"❌ **Critical Failure:** All models offline.\nError: {str(final_e)}")],
                 "final": True}
 
 
@@ -216,7 +217,7 @@ app = workflow.compile()
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
 if has_data:
-    st.info(f"📊 **Analyst Mode:** Redundant Neural Link Active")
+    st.info(f"📊 **Analyst Mode:** Active")
 
 history = load_history(current_sess)
 current_messages = []
