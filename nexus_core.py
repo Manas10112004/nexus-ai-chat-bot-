@@ -35,14 +35,13 @@ if not TAVILY_API_KEY or not GROQ_API_KEY:
 os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
-# --- INTELLIGENCE TIERS (THE POOL) ---
+# --- INTELLIGENCE TIERS (CLEANED) ---
+# Removed decommissioned models (gemma2, llama-3.1-70b)
 SMART_MODELS = [
-    "llama-3.3-70b-versatile",  # 1. Best
-    "llama-3.1-70b-versatile",  # 2. Backup Llama
-    "mixtral-8x7b-32768",  # 3. Backup Mistral
-    "gemma2-9b-it"  # 4. Backup Google
+    "llama-3.3-70b-versatile",  # 1. Best (Flagship)
+    "mixtral-8x7b-32768"  # 2. Reliable Backup
 ]
-FAST_MODEL = "llama-3.1-8b-instant"  # Safety Net
+FAST_MODEL = "llama-3.1-8b-instant"  # Safety Net (Always Active)
 
 
 # --- 2. DATA ENGINE ---
@@ -117,9 +116,6 @@ theme_data = THEMES.get(current_theme, THEMES["🌿 Eywa (Avatar)"])
 
 with st.sidebar:
     st.title("⚙️ NEXUS HQ")
-
-    st.markdown("### 🧠 Brain Power")
-    # We display what's happening but don't force user to choose manually anymore
     st.caption("Auto-Failover System: **Active**")
 
     uploaded_file = st.file_uploader("📂 Upload File", type=None)
@@ -167,65 +163,46 @@ if has_data:
     ))
 
 
-# --- 6. THE SMART AGENT NODE (Failover Logic) ---
+# --- 6. AGENT NODE (ROBUST FAILOVER) ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
 
 def agent_node(state):
     """
-    Tries models in order: Llama 3.3 -> Llama 3.1 -> Mixtral -> Gemma.
-    If ALL fail (Rate Limits), it falls back to the Fast 8B model.
+    Tries Llama 3.3 -> Mixtral.
+    If BOTH fail, falls back to Llama 3.1-8B (Fast).
     """
-
-    # 1. Decide if we need smarts (Data) or speed (Chat)
-    if has_data:
-        candidate_models = SMART_MODELS  # Try the big brains
-    else:
-        candidate_models = [FAST_MODEL]  # Just use fast one
-
+    candidate_models = SMART_MODELS if has_data else [FAST_MODEL]
     last_error = None
 
+    # 1. Try Primary Candidates
     for model_name in candidate_models:
         try:
-            # Initialize dynamic model
             current_llm = ChatGroq(model=model_name, temperature=0.1).bind_tools(tools)
-
-            # Try to invoke
             response = current_llm.invoke(state["messages"])
-
-            # If successful, append a hidden meta-data note if it was a backup model
-            if model_name != SMART_MODELS[0] and has_data:
-                # Optional: You could log this, but for now we just return the clean response
-                pass
-
             return {"messages": [response]}
-
         except Exception as e:
-            error_str = str(e)
             last_error = e
-            # If rate limit, continue to next model loop
-            if "429" in error_str or "Rate limit" in error_str:
-                print(f"⚠️ Model {model_name} overloaded. Switching...")
-                continue
-            else:
-                # Real error (like context length), usually fatal, but let's try others just in case
-                continue
+            # Log the failure but keep going
+            print(f"⚠️ {model_name} Failed: {str(e)}")
+            continue
 
-    # 2. EMERGENCY FALLBACK (If all smart models failed)
+    # 2. EMERGENCY FALLBACK
     try:
+        # If we are here, all smart models failed.
+        # Force fallback to the FASTEST, smallest model.
         fallback_llm = ChatGroq(model=FAST_MODEL, temperature=0.1).bind_tools(tools)
 
-        # We inject a system warning so the user knows
-        fallback_msg = AIMessage(
-            content=f"⚠️ **Network Status:** All High-Intelligence models are currently at capacity. I have switched to the **Instant (8B)** engine to answer you immediately.")
-
+        fallback_note = AIMessage(
+            content=f"⚠️ **Note:** High-intelligence models are busy or hitting rate limits. I'm using the **Instant (8B)** engine to answer this.")
         response = fallback_llm.invoke(state["messages"])
-        return {"messages": [fallback_msg, response]}
+        return {"messages": [fallback_note, response]}
 
     except Exception as final_e:
+        # If even the fallback fails, we show the REAL error
         return {"messages": [AIMessage(
-            content=f"❌ **System Failure:** All models including backup are offline. Error: {str(last_error)}")],
+            content=f"❌ **System Failure:** Even the backup model failed.\nPrimary Error: {str(last_error)}\nFallback Error: {str(final_e)}")],
                 "final": True}
 
 
@@ -241,7 +218,7 @@ app = workflow.compile()
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
 if has_data:
-    st.info(f"📊 **Analyst Mode:** Redundant Neural Link Active (4 Models)")
+    st.info(f"📊 **Analyst Mode:** Redundant Neural Link Active")
 
 history = load_history(current_sess)
 current_messages = []
