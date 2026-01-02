@@ -22,7 +22,10 @@ from langchain_core.tools import Tool
 from nexus_db import init_db, save_message, load_history, clear_session, save_setting, load_setting, get_all_sessions
 from themes import THEMES, inject_theme_css
 
-# --- CONFIGURATION ---
+# --- 1. PAGE CONFIG (MUST BE FIRST STREAMLIT COMMAND) ---
+st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
+
+# --- 2. CONFIGURATION ---
 TAVILY_API_KEY = st.secrets.get("TAVILY_API_KEY")
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 
@@ -36,13 +39,13 @@ os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 MODEL_NAME = "llama-3.3-70b-versatile"
 
 
-# --- DATA ANALYSIS ENGINE ---
+# --- 3. DATA ENGINE CLASS ---
 class DataEngine:
     """Handles file processing for ALL file types."""
 
     def __init__(self):
         self.df = None
-        self.file_content = None  # Stores text from .txt, .py, .md, etc.
+        self.file_content = None
         self.file_type = None
         self.repl = PythonREPL()
 
@@ -51,7 +54,7 @@ class DataEngine:
             name = uploaded_file.name
             self.file_type = name.split('.')[-1].lower()
 
-            # 1. TABULAR DATA (Pandas)
+            # Tabular Data
             if name.endswith(('.csv', '.xlsx', '.xls', '.json')):
                 if name.endswith('.csv'):
                     self.df = pd.read_csv(uploaded_file)
@@ -61,13 +64,13 @@ class DataEngine:
                     self.df = pd.read_json(uploaded_file)
                 return f"✅ Dataset loaded. Shape: {self.df.shape}. Available as variable 'df'."
 
-            # 2. TEXT DATA (Code, Logs, Markdown)
+            # Text Data
             elif name.endswith(('.txt', '.py', '.md', '.log', '.toml', '.yml', '.yaml')):
                 stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
                 self.file_content = stringio.read()
                 return f"✅ Text file read ({len(self.file_content)} chars). Available as variable 'file_content'."
 
-            # 3. OTHER FILES
+            # Other Files
             else:
                 return f"⚠️ File '{name}' received. (Binary/Complex files are currently read-only placeholders)."
 
@@ -75,9 +78,7 @@ class DataEngine:
             return f"❌ Error loading file: {str(e)}"
 
     def run_python_analysis(self, code: str):
-        """Executes python code. Can use 'df' (dataframe) or 'file_content' (text)."""
         try:
-            # We inject variables into the local scope so the AI can use them
             local_scope = {
                 "df": self.df,
                 "file_content": self.file_content,
@@ -86,38 +87,35 @@ class DataEngine:
                 "sns": sns,
                 "st": st
             }
-            # Note: PythonREPL in LangChain is basic. For advanced charts, we rely on text output mostly.
             return self.repl.run(code)
         except Exception as e:
             return f"Execution Error: {str(e)}"
 
 
-# Initialize Engine
+# --- 4. INITIALIZATION (CRITICAL: MUST BE BEFORE SIDEBAR) ---
 if "data_engine" not in st.session_state:
     st.session_state.data_engine = DataEngine()
 
-# --- MAIN PAGE SETUP ---
-st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
-init_db()
-
-# Session ID Logic
 if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 
-# Theme Logic
+init_db()
+
+# --- 5. THEME & UI SETUP ---
 current_theme_setting = load_setting("theme", "🌿 Eywa (Avatar)")
 if current_theme_setting not in THEMES:
     current_theme_setting = "🌿 Eywa (Avatar)"
 inject_theme_css(current_theme_setting)
 theme_data = THEMES[current_theme_setting]
 
-# --- SIDEBAR ---
+# --- 6. SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ NEXUS HQ")
 
-    # 1. FILE UPLOADER
+    # File Uploader
     uploaded_file = st.file_uploader("📂 Upload Data / Files", type=None)
     if uploaded_file:
+        # data_engine is GUARANTEED to exist now because Step 4 ran first
         status = st.session_state.data_engine.load_file(uploaded_file)
         if "Error" in status:
             st.error(status)
@@ -126,7 +124,7 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. CHAT CONTROLS
+    # Chat Controls
     col1, col2 = st.columns(2)
     if col1.button("➕ New Chat"):
         st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
@@ -135,11 +133,11 @@ with st.sidebar:
         clear_session(st.session_state.current_session_id)
         st.rerun()
 
-    # 3. HISTORY LIST
+    # History List
     st.markdown("### 🕒 History")
     all_sessions = get_all_sessions()
 
-    for sess in all_sessions[:8]:  # Show last 8
+    for sess in all_sessions[:8]:
         if sess == st.session_state.current_session_id:
             st.markdown(f"**🔹 {sess}**")
         else:
@@ -149,7 +147,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 4. SETTINGS
     selected_theme = st.selectbox("Theme", list(THEMES.keys()), index=list(THEMES.keys()).index(current_theme_setting))
     if selected_theme != current_theme_setting:
         save_setting("theme", selected_theme)
@@ -157,17 +154,16 @@ with st.sidebar:
 
     web_search_on = st.toggle("🌐 Web Search", value=True)
 
-# --- AI GRAPH SETUP ---
+# --- 7. AI GRAPH & TOOLS ---
 tavily_tool = TavilySearchResults(max_results=2)
 tools = [tavily_tool]
 
 
-# Add Python Tool if data exists
 def python_analysis_tool(code: str):
-    """Executes Python code. Use 'df' for dataframes, 'file_content' for text."""
     return st.session_state.data_engine.run_python_analysis(code)
 
 
+# Only enable Python tool if data is actually loaded
 if st.session_state.data_engine.df is not None or st.session_state.data_engine.file_content is not None:
     tools.append(Tool(
         name="python_analysis",
@@ -177,7 +173,6 @@ if st.session_state.data_engine.df is not None or st.session_state.data_engine.f
 
 llm = ChatGroq(model=MODEL_NAME, temperature=0.1)
 
-# Bind tools if search is on OR if we have data to analyze
 if web_search_on or len(tools) > 1:
     llm_with_tools = llm.bind_tools(tools)
 else:
@@ -206,13 +201,12 @@ else:
 
 app = workflow.compile()
 
-# --- CHAT UI ---
+# --- 8. CHAT INTERFACE ---
 st.title(f"NEXUS // {selected_theme.split(' ')[1].upper()}")
 
 history = load_history(st.session_state.current_session_id)
 current_messages = []
 
-# Render History
 for msg in history:
     role = "user" if msg["role"] == "user" else "assistant"
     avatar = theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]
@@ -224,13 +218,11 @@ for msg in history:
     else:
         current_messages.append(AIMessage(content=msg["content"]))
 
-# INPUT
 if prompt := st.chat_input("Enter command or query..."):
     with st.chat_message("user", avatar=theme_data["user_avatar"]):
         st.markdown(prompt)
     save_message(st.session_state.current_session_id, "user", prompt)
 
-    # Contextual Prompt
     system_text = """You are Nexus.
     1. If the user asks about the UPLOADED FILE, use 'python_analysis' tool.
        - 'df' is the dataframe. 'file_content' is the text string.
