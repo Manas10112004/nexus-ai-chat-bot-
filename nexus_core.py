@@ -28,7 +28,7 @@ os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 os.environ["GROQ_API_KEY"] = GROQ_API_KEY
 
 # Industry Standard Model via Groq (Fast & Deployable)
-MODEL_NAME = "llama-3.1-70b-versatile"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 
 # --- PDF GENERATOR ---
