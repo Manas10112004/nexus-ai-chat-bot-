@@ -3,16 +3,17 @@ import uuid
 import matplotlib.pyplot as plt
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
-# Custom Modules
+# --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
 from themes import THEMES, inject_theme_css
 from nexus_engine import DataEngine
 from nexus_brain import build_agent_graph, get_key_status
 
-# --- UI SETUP ---
+# --- UI CONFIG ---
 st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
 init_db()
 
+# --- INITIALIZE STATE ---
 if "data_engine" not in st.session_state: st.session_state.data_engine = DataEngine()
 engine = st.session_state.data_engine
 
@@ -20,6 +21,7 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
+# --- BUILD BRAIN ---
 app = build_agent_graph(engine)
 
 # --- SIDEBAR ---
@@ -58,49 +60,58 @@ with st.sidebar:
             st.session_state.current_session_id = s
             st.rerun()
 
-# --- CHAT UI ---
+# --- CHAT INTERFACE ---
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
+# Load History
 history = load_history(current_sess)
 for msg in history:
     role = "user" if msg["role"] == "user" else "assistant"
     with st.chat_message(role, avatar=theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]):
         st.markdown(msg["content"])
 
+# User Input
 if prompt := st.chat_input("Enter command..."):
     with st.chat_message("user", avatar=theme_data["user_avatar"]):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
-    # Refresh Columns
+    # Refresh Cheatsheet
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    system_text = "You are Nexus."
+    # System Prompt
     has_data = "df" in engine.scope
+    system_text = "You are Nexus."
     if has_data:
         system_text += f"""
-            [DATA MODE ACTIVE]
-            1. Variable 'df' is loaded.
-            2. VALID COLUMNS: [{engine.column_str}]
-            3. NUMBERS/TEXT: You MUST use `print()`. Example: `print(df.shape)`.
-            4. CHARTS: Use `plt.figure()` -> `plt.plot()`.
-            5. DO NOT ASSIGN variables without printing them. The user cannot see variables.
-            """
+        [DATA MODE ACTIVE]
+        1. Variable 'df' is loaded.
+        2. VALID COLUMNS: [{engine.column_str}]
+        3. NUMBERS/TEXT: You MUST use `print()`. Example: `print(df['Promotion'].value_counts())`.
+        4. CHARTS: Use `plt.figure()` -> `plt.plot()`.
+        5. DO NOT ASSIGN variables without printing them.
+        """
     else:
         system_text += " If no file, use 'tavily'."
 
+    # --- THE FIX: MEMORY WINDOW ---
+    # Only keep the last 6 messages to stay under the 6,000 token limit
+    recent_history = history[-6:]
+
     messages = [SystemMessage(content=system_text)] + \
                [HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"]) for m in
-                history] + \
+                recent_history] + \
                [HumanMessage(content=prompt)]
 
+    # Run Agent
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
         status_box = st.status("Processing...", expanded=True)
         try:
             final_resp = ""
             for event in app.stream({"messages": messages}, config={"recursion_limit": 50}, stream_mode="values"):
                 msg = event["messages"][-1]
+
                 if isinstance(msg, ToolMessage):
                     status_box.write(f"⚙️ Output: {msg.content[:200]}...")
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
@@ -110,10 +121,10 @@ if prompt := st.chat_input("Enter command..."):
                     final_resp = msg.content
                     st.markdown(final_resp)
 
-            # --- SHOW CHART (The Fix) ---
+            # Show Chart if one was created
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
-                engine.latest_figure = None  # Clear after showing
+                engine.latest_figure = None
 
             if final_resp:
                 status_box.update(label="Complete", state="complete", expanded=False)
