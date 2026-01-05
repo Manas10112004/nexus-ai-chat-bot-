@@ -29,7 +29,6 @@ st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
 raw_groq = st.secrets.get("GROQ_API_KEYS", "")
 raw_tavily = st.secrets.get("TAVILY_API_KEYS", "")
 
-# Convert to Lists
 GROQ_KEYS = [k.strip() for k in raw_groq.split(",") if k.strip()]
 TAVILY_KEYS = [k.strip() for k in raw_tavily.split(",") if k.strip()]
 
@@ -54,7 +53,6 @@ def get_current_keys():
 
 
 def rotate_groq_key():
-    """Moves to the next Groq key in the list."""
     st.session_state.groq_idx = (st.session_state.groq_idx + 1) % len(GROQ_KEYS)
     new_key = GROQ_KEYS[st.session_state.groq_idx]
     os.environ["GROQ_API_KEY"] = new_key
@@ -62,7 +60,6 @@ def rotate_groq_key():
 
 
 def rotate_tavily_key():
-    """Moves to the next Tavily key."""
     st.session_state.tavily_idx = (st.session_state.tavily_idx + 1) % len(TAVILY_KEYS)
     new_key = TAVILY_KEYS[st.session_state.tavily_idx]
     os.environ["TAVILY_API_KEY"] = new_key
@@ -72,7 +69,7 @@ def rotate_tavily_key():
 # Initialize Keys
 get_current_keys()
 
-# MODELS
+# MODELS - Removed dead models
 MODEL_SMART = "llama-3.3-70b-versatile"
 MODEL_FAST = "llama-3.1-8b-instant"
 
@@ -115,14 +112,15 @@ class DataEngine:
         old_stdout = sys.stdout
         redirected_output = sys.stdout = StringIO()
         try:
-            plt.clf()
+            plt.clf()  # Clear previous plots
             exec(code, self.scope)
             result = redirected_output.getvalue()
 
             if plt.get_fignums():
                 st.pyplot(plt)
                 plt.clf()
-                return f"Output:\n{result}\n[SUCCESS: Chart Rendered. STOP.]"
+                # 🛑 FORCE STOP SIGNAL
+                return f"Output:\n{result}\n[SYSTEM MSG: Chart Successfully Rendered. TASK COMPLETE. STOP NOW.]"
 
             return f"Output:\n{result}" if result else "Code executed successfully."
         except Exception as e:
@@ -149,8 +147,6 @@ theme_data = THEMES.get(current_theme, THEMES["🌿 Eywa (Avatar)"])
 
 with st.sidebar:
     st.title("⚙️ NEXUS HQ")
-
-    # Key Status Display
     st.caption(f"🔑 **Groq Key:** {st.session_state.groq_idx + 1}/{len(GROQ_KEYS)}")
     st.caption(f"🔑 **Tavily Key:** {st.session_state.tavily_idx + 1}/{len(TAVILY_KEYS)}")
 
@@ -189,18 +185,16 @@ def python_analysis_tool(code: str):
 has_data = "df" in engine.scope or "file_content" in engine.scope
 
 
-# --- 6. AGENT NODE (ROTATION LOGIC) ---
+# --- 6. AGENT NODE (Failover + Multi-Key) ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
 
 def get_fresh_tools():
-    """Re-creates tools so they pick up the NEW active key."""
-    get_current_keys()  # Refresh os.environ
-
+    """Refreshes tools to pick up any environment variable changes"""
+    get_current_keys()
     t_tool = TavilySearchResults(max_results=2)
     tool_list = [t_tool]
-
     if has_data:
         tool_list.append(StructuredTool.from_function(
             func=python_analysis_tool,
@@ -212,10 +206,6 @@ def get_fresh_tools():
 
 
 def agent_node(state):
-    # Strategy: Try SMART model with current key.
-    # If key fails (429), rotate key and retry.
-    # If all keys fail, switch to FAST model.
-
     primary_model = MODEL_SMART if has_data else MODEL_FAST
     models_to_try = [primary_model, MODEL_FAST]
     if primary_model == MODEL_FAST: models_to_try = [MODEL_FAST]
@@ -223,14 +213,12 @@ def agent_node(state):
     last_error = None
 
     for model_name in models_to_try:
-        # Loop through ALL keys available
+        # Retry with all keys
         for i in range(len(GROQ_KEYS)):
             try:
-                # 1. Get Fresh Tools & Key
                 tools = get_fresh_tools()
                 current_key = os.environ["GROQ_API_KEY"]
 
-                # 2. Invoke
                 llm = ChatGroq(model=model_name, temperature=0.1, api_key=current_key).bind_tools(tools)
                 response = llm.invoke(state["messages"])
                 return {"messages": [response]}
@@ -239,31 +227,27 @@ def agent_node(state):
                 error_str = str(e)
                 last_error = e
 
-                # Handle Rate Limit -> Rotate Key
                 if "429" in error_str or "Rate limit" in error_str:
                     print(f"⚠️ Key #{st.session_state.groq_idx + 1} hit limit. Rotating...")
                     rotate_groq_key()
-                    continue  # Retry loop with new key
-
-                # Handle Unauthorized -> Rotate Key
+                    continue
                 elif "401" in error_str:
                     print(f"⚠️ Key #{st.session_state.groq_idx + 1} invalid. Rotating...")
                     rotate_groq_key()
                     continue
-
                 else:
-                    # Not a key error? Probably a model error. Break key loop, try next model.
-                    print(f"❌ Non-Key Error on {model_name}: {error_str}")
+                    # Non-key error, try next model
+                    print(f"❌ Model Error {model_name}: {error_str}")
                     break
 
-    return {"messages": [AIMessage(
-        content=f"❌ **System Exhausted:** Used all {len(GROQ_KEYS)} keys and all models. Last Error: {str(last_error)}")],
+    return {"messages": [
+        AIMessage(content=f"❌ **System Exhausted:** All keys/models failed. Last Error: {str(last_error)}")],
             "final": True}
 
 
 workflow = StateGraph(AgentState)
 workflow.add_node("agent", agent_node)
-workflow.add_node("tools", ToolNode(get_fresh_tools()))  # Dummy Init
+workflow.add_node("tools", ToolNode(get_fresh_tools()))
 workflow.add_edge(START, "agent")
 workflow.add_conditional_edges("agent", tools_condition)
 workflow.add_edge("tools", "agent")
@@ -295,14 +279,14 @@ if prompt := st.chat_input("Enter command..."):
 
     system_text = "You are Nexus."
     if has_data:
-        # --- THE FIX: STRICT VISUAL INSTRUCTIONS ---
+        # --- ANTI-LOOP SYSTEM PROMPT ---
         system_text += """
         [DATA MODE ACTIVE]
         1. Variable 'df' is loaded.
-        2. IF ASKED FOR A PLOT: You MUST write Python code to create it.
-        3. Use `plt.figure()` first, then `sns.heatmap()` or `plt.plot()`.
-        4. DO NOT explain how to plot. DO NOT say "I can plot this." JUST RUN THE CODE.
-        5. DO NOT use `plt.show()`.
+        2. CHECK COLUMNS FIRST: If unsure of column names, run `print(df.columns)` first.
+        3. PLOTTING: Use `plt.figure()` -> `plt.plot()` -> NO `plt.show()`.
+        4. STOPPING RULE: If the tool says "[SYSTEM MSG: Chart Successfully Rendered]", YOU MUST STOP. Do not run code again.
+        5. If your code fails twice, stop and tell the user you cannot plot it.
         """
     else:
         system_text += " If no file, use 'tavily'."
@@ -311,22 +295,27 @@ if prompt := st.chat_input("Enter command..."):
     current_messages.append(HumanMessage(content=prompt))
 
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
-        status_box = st.status("Thinking...", expanded=True)
+        status_box = st.status("Processing...", expanded=True)
         try:
             final_response = ""
             for event in app.stream({"messages": current_messages}, config={"recursion_limit": 50},
                                     stream_mode="values"):
                 last_msg = event["messages"][-1]
+
+                # --- LIVE DEBUGGING: Show tool output to User ---
+                if isinstance(last_msg, ToolMessage):
+                    status_box.write(f"⚙️ **Tool Output:** {last_msg.content[:200]}...")  # Show first 200 chars
+
                 if hasattr(last_msg, 'tool_calls') and len(last_msg.tool_calls) > 0:
                     for t in last_msg.tool_calls:
-                        status_box.write(f"⚙️ **Using Tool:** `{t['name']}`")
+                        status_box.write(f"⚙️ **Calling:** `{t['name']}`")
 
                 if isinstance(last_msg, AIMessage) and last_msg.content:
                     final_response = last_msg.content
                     st.markdown(final_response)
 
             if final_response:
-                status_box.update(label="Done", state="complete", expanded=False)
+                status_box.update(label="Complete", state="complete", expanded=False)
                 save_message(current_sess, "assistant", final_response)
             else:
                 st.error("No response.")
