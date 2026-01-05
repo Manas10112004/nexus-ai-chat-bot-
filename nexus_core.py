@@ -80,23 +80,28 @@ if prompt := st.chat_input("Enter command..."):
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # System Prompt
-    has_data = "df" in engine.scope
+    # --- THE FIX: "HD SUMMARY" INSTRUCTIONS ---
     system_text = "You are Nexus."
+    has_data = "df" in engine.scope
     if has_data:
         system_text += f"""
         [DATA MODE ACTIVE]
         1. Variable 'df' is loaded.
         2. VALID COLUMNS: [{engine.column_str}]
-        3. NUMBERS/TEXT: You MUST use `print()`. Example: `print(df['Promotion'].value_counts())`.
-        4. CHARTS: Use `plt.figure()` -> `plt.plot()`.
-        5. DO NOT ASSIGN variables without printing them.
+        3. IF ASKED TO "SUMMARIZE" or "ANALYZE" THE FILE:
+           - You MUST write a script that calculates and prints:
+             a) Total Rows & Columns
+             b) Missing Values (if any)
+             c) Top 3 Categories for non-numeric columns (e.g. Top Artists, Top Cities)
+             d) Key Statistics for numeric columns (Mean, Max)
+           - PRINT the output in a clean format. Do NOT just `print(df.head())`.
+        4. IF PLOTTING: Use `plt.figure()` -> `plt.plot()`.
+        5. DECISION RULE: If the user asks for numbers/text, use `print()`. If visual, use `plt`.
         """
     else:
         system_text += " If no file, use 'tavily'."
 
-    # --- THE FIX: MEMORY WINDOW ---
-    # Only keep the last 6 messages to stay under the 6,000 token limit
+    # Memory Window
     recent_history = history[-6:]
 
     messages = [SystemMessage(content=system_text)] + \
@@ -121,7 +126,7 @@ if prompt := st.chat_input("Enter command..."):
                     final_resp = msg.content
                     st.markdown(final_resp)
 
-            # Show Chart if one was created
+            # Show Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
                 engine.latest_figure = None
