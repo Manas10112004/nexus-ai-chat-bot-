@@ -62,7 +62,7 @@ MODEL_SMART = "llama-3.3-70b-versatile"
 MODEL_FAST = "llama-3.1-8b-instant"
 
 
-# --- 2. DATA ENGINE (WITH ADVANCED SELF-HEALING) ---
+# --- 2. DATA ENGINE (WITH TEXT SUCCESS TRIGGER) ---
 class DataEngine:
     def __init__(self):
         self.scope = {
@@ -102,10 +102,8 @@ class DataEngine:
         """Autocorrects code to prevent common crashes."""
         if self.df is None: return code
 
-        # 1. FIX: Numeric Columns Only for Correlation (Prevents 'string to float' crash)
+        # 1. FIX: Numeric Columns Only for Correlation
         if ".corr()" in code and "numeric_only" not in code:
-            print("🔧 Auto-Healing: Forced numeric_only for correlation")
-            # Replace basic .corr() with strict numeric version
             code = code.replace(".corr()", ".select_dtypes(include=['number']).corr()")
 
         # 2. FIX: Column Name Typos (Case-Insensitive)
@@ -135,10 +133,15 @@ class DataEngine:
             exec(code, self.scope)
             result = redirected_output.getvalue()
 
+            # 1. Check for Charts
             if plt.get_fignums():
                 st.pyplot(plt)
                 plt.clf()
                 return f"Output:\n{result}\n[CHART GENERATED]"
+
+            # 2. Check for Text Output (THE FIX FOR 'HOW MANY' QUESTIONS)
+            if result and len(result.strip()) > 0:
+                return f"Output:\n{result}\n[ANALYSIS COMPLETE]"
 
             return f"Output:\n{result}" if result else "Code executed successfully."
 
@@ -272,7 +275,7 @@ if prompt := st.chat_input("Enter command..."):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
-    # REFRESH COLUMNS (Fix for Stale Memory)
+    # REFRESH COLUMNS
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
@@ -282,8 +285,9 @@ if prompt := st.chat_input("Enter command..."):
         [DATA MODE]
         1. Variable 'df' is loaded.
         2. VALID COLUMNS: [{engine.column_str}]
-        3. PLOT: `plt.figure()` -> `plt.plot()` -> NO `plt.show()`.
-        4. STOP: If tool output says "[CHART GENERATED]", STOP immediately.
+        3. FOR PLOTS: `plt.figure()` -> `plt.plot()` -> NO `plt.show()`.
+        4. FOR NUMBERS/COUNTS: Use `print()`. Example: `print(df['Promotion'].value_counts())`.
+        5. STOPPING: If tool output says "[ANALYSIS COMPLETE]" or "[CHART GENERATED]", STOP.
         """
     else:
         system_text += " If no file, use 'tavily'."
