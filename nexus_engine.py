@@ -79,28 +79,31 @@ class DataEngine:
         redirected_output = sys.stdout = StringIO()
 
         try:
-            plt.clf()
+            plt.close('all')  # Clear any ghost plots from before
+            plt.figure(figsize=(10, 6))  # Default size
+
             exec(code, self.scope)
             result = redirected_output.getvalue()
 
-            # 1. Check for Charts
+            # --- THE FIX: GHOST BUSTER ---
+            # Only declare a chart generated if it actually HAS data
             if plt.get_fignums():
-                self.latest_figure = plt.gcf()
-                return f"Output:\n{result}\n[CHART GENERATED]"
+                ax = plt.gca()
+                # Check for lines, bars (patches), or collections (scatter plots)
+                has_content = len(ax.lines) > 0 or len(ax.patches) > 0 or len(ax.collections) > 0 or len(ax.images) > 0
+
+                if has_content:
+                    self.latest_figure = plt.gcf()
+                    return f"Output:\n{result}\n[CHART GENERATED]"
+                else:
+                    # It's a blank figure. Ignore it.
+                    plt.close()
 
             # 2. Check for Text Output
             if result and len(result.strip()) > 0:
                 return f"Output:\n{result}\n[ANALYSIS COMPLETE]"
 
-            # 3. SILENT ERROR FIX: If no output, force the AI to retry with print()
-            return "❌ Error: Code executed but printed nothing. You MUST use print() to show the answer."
-
-        except KeyError as e:
-            cols = self.column_str if self.column_str else "Data Not Loaded"
-            return f"❌ Column Error: {str(e)}\n💡 AVAILABLE COLUMNS: {cols}"
-
-        except SyntaxError as e:
-            return f"❌ Syntax Error: {str(e)}\n💡 Hint: Do not use assignments inside functions. Use print(value) directly."
+            return "❌ Error: Code ran but printed nothing. Use print() to show numbers, or plt.plot() for graphs."
 
         except Exception as e:
             return f"❌ Execution Error: {str(e)}"
