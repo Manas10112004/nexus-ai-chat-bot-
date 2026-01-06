@@ -81,22 +81,29 @@ def build_agent_graph(data_engine):
     init_keys()
 
     def agent_node(state):
-        # --- SHORT-CIRCUIT LOGIC ---
+        # --- SHORT-CIRCUIT LOGIC (FIXED) ---
         last_msg = state["messages"][-1]
 
         if isinstance(last_msg, ToolMessage):
             content = last_msg.content
 
+            # Helper to extract text
+            def extract_text(raw):
+                clean = raw.replace("[CHART GENERATED]", "").replace("[ANALYSIS COMPLETE]", "").replace("Output:\n",
+                                                                                                        "").strip()
+                return clean
+
             # Case A: Chart Created
             if "[CHART GENERATED]" in content:
-                return {"messages": [AIMessage(content="✅ Chart generated successfully. (See plot above)")]}
+                explanation = extract_text(content)
+                if not explanation: explanation = "Chart generated (No text description provided)."
+                return {"messages": [AIMessage(content=f"{explanation}\n\n*(See the chart plotted above)*")]}
 
             # Case B: Text Analysis
             if "[ANALYSIS COMPLETE]" in content:
-                clean_answer = content.replace("[ANALYSIS COMPLETE]", "").replace("Output:\n", "").strip()
-                if not clean_answer:
-                    clean_answer = "Analysis finished, but no text output was captured. (Did you print?)"
-                return {"messages": [AIMessage(content=f"**Analysis Results:**\n\n```\n{clean_answer}\n```")]}
+                clean_answer = extract_text(content)
+                if not clean_answer: clean_answer = "Analysis finished, but no text output was captured."
+                return {"messages": [AIMessage(content=f"**Analysis Results:**\n\n{clean_answer}")]}
 
         # --- STANDARD LLM EXECUTION ---
         has_data = "df" in data_engine.scope

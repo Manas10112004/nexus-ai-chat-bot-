@@ -9,25 +9,19 @@ from statsmodels.tsa.holtwinters import ExponentialSmoothing
 class InsightModule:
     """
     Advanced Analytics Module for Nexus AI.
-    Features: Anomaly Detection, Forecasting, Smart Correlations.
+    NOW WITH AUTO-PRINTING to ensure explanations appear with charts.
     """
 
     def __init__(self):
         pass
 
     def check_anomalies(self, df, column_name, contamination=0.05):
-        """
-        Detects anomalies in a numeric column using Isolation Forest.
-        Returns: A plot and a dataframe with anomalies highlighted.
-        """
-        # Prepare Data
+        # Prep Data
         data = df[[column_name]].dropna()
 
         # Train Model
         model = IsolationForest(contamination=contamination, random_state=42)
         data['anomaly'] = model.fit_predict(data[[column_name]])
-
-        # -1 indicates anomaly, 1 indicates normal
         anomalies = data[data['anomaly'] == -1]
 
         # Plot
@@ -37,23 +31,27 @@ class InsightModule:
         plt.title(f"Anomaly Detection: {column_name}")
         plt.legend()
 
-        return f"Found {len(anomalies)} anomalies in '{column_name}'. (See plot above)"
+        # PRINT THE INSIGHT (Don't just return it)
+        print(f"### 🔍 Anomaly Report: {column_name}")
+        print(f"- **Total Anomalies Found:** {len(anomalies)}")
+        if len(anomalies) > 0:
+            avg_anom = anomalies[column_name].mean()
+            print(
+                f"- **Context:** The anomalies have an average value of {avg_anom:.2f}, which is significantly different from the norm.")
+            print("- **Visual:** Look for the RED dots in the chart above.")
+        else:
+            print("- No significant anomalies detected.")
 
     def forecast_series(self, df, date_col, value_col, periods=30):
-        """
-        Forecasts future values using Exponential Smoothing (Holt-Winters).
-        """
         # Prep Data
         temp_df = df.copy()
         temp_df[date_col] = pd.to_datetime(temp_df[date_col])
         temp_df = temp_df.sort_values(by=date_col).set_index(date_col)
-
-        # Resample to daily/monthly if needed (Auto-detect frequency is hard, assuming daily/index)
-        # For simplicity in this demo, we assume the index is clean or we use values directly
         series = temp_df[value_col].dropna()
 
         if len(series) < 10:
-            return "❌ Not enough data points to forecast (Need at least 10)."
+            print("❌ Not enough data points to forecast (Need at least 10).")
+            return
 
         # Train Model
         try:
@@ -67,19 +65,24 @@ class InsightModule:
             plt.title(f"Forecast: {value_col} ({periods} steps)")
             plt.legend()
 
-            return f"Forecast generated for next {periods} periods. (See plot above)"
+            # PRINT THE INSIGHT
+            print(f"### 📈 Forecast Report: {value_col}")
+            print(f"- **Prediction Window:** Next {periods} periods.")
+            print(f"- **Trend:** The model predicts the value will end around {forecast.iloc[-1]:.2f}.")
+            print("- **Visual:** The GREEN dotted line in the chart shows the future trend.")
+
         except Exception as e:
-            return f"❌ Forecasting Error: {str(e)}"
+            print(f"❌ Forecasting Error: {str(e)}")
 
     def get_correlation_drivers(self, df, target_col):
-        """
-        Finds which columns correspond most strongly with the target.
-        """
         numeric_df = df.select_dtypes(include=['number'])
         if target_col not in numeric_df.columns:
-            return "Target column must be numeric."
+            print(f"❌ Target column '{target_col}' must be numeric.")
+            return
 
-        corr = numeric_df.corr()[target_col].sort_values(ascending=False)
+        corr = numeric_df.corr()[target_col].sort_values(ascending=False).drop(target_col)
+        top_driver = corr.index[0]
+        top_score = corr.iloc[0]
 
         # Plot
         plt.figure(figsize=(8, 5))
@@ -87,4 +90,13 @@ class InsightModule:
         plt.title(f"Correlation Drivers for '{target_col}'")
         plt.axvline(0, color='black', linewidth=1)
 
-        return corr.to_string()
+        # PRINT THE INSIGHT
+        print(f"### 🎯 Key Drivers for '{target_col}'")
+        print(f"- **Top Driver:** {top_driver} (Correlation: {top_score:.2f})")
+        print("- **Interpretation:**")
+        if top_score > 0.5:
+            print(f"  - Strong positive relationship. As '{top_driver}' goes up, '{target_col}' likely goes up.")
+        elif top_score < -0.5:
+            print(f"  - Strong negative relationship. As '{top_driver}' goes up, '{target_col}' goes down.")
+        else:
+            print("  - Relationships are moderate. Other factors may be involved.")
