@@ -2,9 +2,7 @@ import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
 import os
-import tempfile
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from streamlit_mic_recorder import mic_recorder
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -20,6 +18,7 @@ from nexus_voice import transcribe_audio
 # --- UI CONFIG ---
 st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
 
+# --- 1. SECURITY GATE ---
 if not check_password():
     st.stop()
 
@@ -32,10 +31,6 @@ engine = st.session_state.data_engine
 if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
-
-# Voice State Manager
-if "last_voice_id" not in st.session_state:
-    st.session_state.last_voice_id = None
 
 # --- BUILD BRAIN ---
 app = build_agent_graph(engine)
@@ -54,33 +49,28 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. VOICE MODE ---
-    st.markdown("### 🎙️ Voice Input")
+    # --- 2. VOICE MODE (ENTERPRISE NATIVE) ---
+    st.markdown("### 🎙️ Voice Command")
+    st.info("Record a voice note to instruct Nexus.")
 
-    audio = mic_recorder(
-        start_prompt="🎤 Start Recording",
-        stop_prompt="⏹️ Stop Recording",
-        key='recorder',
-        format="wav",
-        use_container_width=True
-    )
+    # NATIVE WIDGET: Reliable, Mobile-Ready, Secure
+    audio_value = st.audio_input("Record Voice Note", label_visibility="collapsed")
 
     voice_text = ""
-    if audio:
-        current_audio_id = hash(audio['bytes'])
-        if current_audio_id != st.session_state.last_voice_id:
-            status_container = st.empty()
-            status_container.info("Transcribing...")
+    if audio_value:
+        # Professional Feedback Loop
+        with st.status("🎧 Processing Audio...", expanded=False) as status:
+            st.write("Uploading audio file...")
+            voice_text = transcribe_audio(audio_value)
 
-            # ✅ FIX: try/finally ensures the status ALWAYS disappears
-            try:
-                voice_text = transcribe_audio(audio['bytes'])
-                st.session_state.last_voice_id = current_audio_id
-            finally:
-                status_container.empty()
+            if voice_text:
+                st.write("Transcribing...")
+                status.update(label="Audio Processed", state="complete")
+            else:
+                status.update(label="No Speech Detected", state="error")
 
-    if voice_text:
-        st.success(f"Heard: '{voice_text}'")
+        if voice_text:
+            st.success(f"**Recognized:** \"{voice_text}\"")
 
     st.divider()
 
@@ -92,34 +82,40 @@ with st.sidebar:
         else:
             st.success(status)
 
-    if st.button("🧹 Clear Plots"):
+    if st.button("🧹 Clear Plots", use_container_width=True):
         plt.clf()
         engine.latest_figure = None
-        # ✅ FIX: Clean from /tmp/
-        temp_dir = tempfile.gettempdir()
-        temp_chart = os.path.join(temp_dir, "temp_chart.png")
-        if os.path.exists(temp_chart): os.remove(temp_chart)
+        if os.path.exists("temp_chart.png"): os.remove("temp_chart.png")
         st.success("Plots cleared.")
 
     st.divider()
 
     # --- 3. SMART REPORTING ---
     st.markdown("### 📄 Reporting")
-    if st.button("📥 Export PDF Report"):
-        history = load_history(current_sess)
-        pdf_file = generate_pdf(history, current_sess)
+    if st.button("📥 Export PDF Report", use_container_width=True):
+        with st.spinner("Compiling PDF..."):
+            history = load_history(current_sess)
+            pdf_file = generate_pdf(history, current_sess)
         with open(pdf_file, "rb") as f:
-            st.download_button("⬇️ Download PDF", f, file_name=os.path.basename(pdf_file))
+            st.download_button("⬇️ Download PDF", f, file_name=pdf_file, use_container_width=True)
 
     st.divider()
 
-    st.markdown("### 🕒 History")
-    if st.button("➕ New Chat"):
-        st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
-        st.rerun()
+    st.markdown("### 🕒 Session History")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("➕ New", use_container_width=True):
+            st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
+            st.rerun()
+    with col2:
+        if st.button("🗑️ Clear", use_container_width=True):
+            clear_session(current_sess)
+            st.rerun()
 
+    # List recent sessions
+    st.caption("Recent Sessions:")
     for s in get_all_sessions()[:5]:
-        if st.button(f"{s}", key=s):
+        if st.button(f"📂 {s}", key=s, use_container_width=True):
             st.session_state.current_session_id = s
             st.rerun()
 
@@ -137,7 +133,8 @@ for msg in history:
 user_input = st.chat_input("Enter command...")
 
 prompt = None
-if voice_text:
+# Prioritize Voice if valid
+if voice_text and not voice_text.startswith("["):
     prompt = voice_text
 elif user_input:
     prompt = user_input
@@ -147,10 +144,11 @@ if prompt:
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
+    # Refresh Cheatsheet
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # --- SYSTEM PROMPT ---
+    # --- SYSTEM PROMPT (Robust & Flexible) ---
     system_text = "You are Nexus, an advanced data analysis AI. You have access to a Python environment."
     has_data = "df" in engine.scope
 
@@ -166,11 +164,12 @@ if prompt:
         [SANDBOX MODE ACTIVE]
         1. No file loaded.
         2. You can still use 'python_analysis' to:
-           - Generate synthetic data (e.g. "plot a sine wave", "simulate a random walk").
+           - Generate synthetic data.
            - Perform math calculations.
         3. If asked for real-world facts/news, use 'tavily'.
         """
 
+    # Memory Window
     recent_history = history[-6:]
 
     messages = [SystemMessage(content=system_text)] + \
@@ -178,6 +177,7 @@ if prompt:
                 recent_history] + \
                [HumanMessage(content=prompt)]
 
+    # Run Agent
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
         status_box = st.status("Processing...", expanded=True)
         try:
@@ -192,16 +192,11 @@ if prompt:
                 if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
                     final_resp = msg.content
 
-            # 1. Render Chart & Save to TMP
+            # 1. Render Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
-
-                # ✅ FIX: Save to /tmp/ so PDF can find it
-                temp_dir = tempfile.gettempdir()
-                chart_path = os.path.join(temp_dir, "temp_chart.png")
+                chart_path = f"chart_{current_sess}.png"
                 engine.latest_figure.savefig(chart_path)
-
-                # Reset figure so it doesn't persist forever
                 engine.latest_figure = None
 
             # 2. Render Text
