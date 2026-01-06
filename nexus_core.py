@@ -33,7 +33,7 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
-# Initialize Voice State to prevent loops
+# Initialize Voice State
 if "last_voice_id" not in st.session_state:
     st.session_state.last_voice_id = None
 
@@ -54,7 +54,7 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. VOICE MODE (SMART) ---
+    # --- 2. VOICE MODE (SMART & CLEAN UI) ---
     st.markdown("### 🎙️ Voice Input")
     audio = mic_recorder(
         start_prompt="🎤 Speak",
@@ -69,8 +69,15 @@ with st.sidebar:
         # Check if this is a NEW voice command
         current_audio_id = hash(audio['bytes'])
         if current_audio_id != st.session_state.last_voice_id:
-            st.info("Transcribing...")
+            # 🟢 UI FIX: Use a placeholder container that we can clear
+            status_msg = st.empty()
+            status_msg.info("Transcribing...")
+
             voice_text = transcribe_audio(audio['bytes'])
+
+            # Clear the message immediately after transcription
+            status_msg.empty()
+
             st.session_state.last_voice_id = current_audio_id
 
     st.divider()
@@ -121,12 +128,10 @@ for msg in history:
     with st.chat_message(role, avatar=theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]):
         st.markdown(msg["content"])
 
-# --- INPUT HANDLING (TEXT OR VOICE) ---
-# 1. Always render the input box so it never disappears
+# --- INPUT HANDLING ---
 user_input = st.chat_input("Enter command...")
 
 prompt = None
-# 2. Prioritize Voice if a new command just came in, otherwise wait for Text
 if voice_text:
     prompt = voice_text
 elif user_input:
@@ -141,23 +146,27 @@ if prompt:
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # --- SYSTEM PROMPT ---
-    system_text = "You are Nexus, an advanced data analysis AI."
+    # --- SYSTEM PROMPT (UPDATED FOR SANDBOX MODE) ---
+    system_text = "You are Nexus, an advanced data analysis AI. You have access to a Python environment."
     has_data = "df" in engine.scope
+
     if has_data:
         system_text += f"""
         [DATA MODE ACTIVE]
         1. Variable 'df' is loaded.
         2. VALID COLUMNS: [{engine.column_str}]
-
-        3. INSTRUCTIONS:
-           - When asked for specific insights (Anomalies, Forecasts), prefer using the 'insights' module if applicable.
-           - For general queries, write standard Python code using pandas/matplotlib.
-           - ALWAYS explain the code output to the user clearly. Don't just show the number, interpret it.
-           - If you generate a plot, mention "I have generated a chart above."
+        3. Use 'python_analysis' for all data queries.
         """
     else:
-        system_text += " If no file, use 'tavily' for web search."
+        # 🟢 CHANGE: Explicitly allow Python for simulation/plotting
+        system_text += """
+        [SANDBOX MODE ACTIVE]
+        1. No file loaded.
+        2. You can still use 'python_analysis' to:
+           - Generate synthetic data (e.g. "plot a sine wave", "simulate a random walk").
+           - Perform math calculations.
+        3. If asked for real-world facts/news, use 'tavily'.
+        """
 
     # Memory Window
     recent_history = history[-6:]
@@ -185,7 +194,6 @@ if prompt:
             # 1. Render Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
-                # SAVE CHART FOR PDF (Ensure unique name for concurrent users if needed, simplistic here)
                 chart_path = f"chart_{current_sess}.png"
                 engine.latest_figure.savefig(chart_path)
                 engine.latest_figure = None

@@ -57,18 +57,16 @@ def get_tools(data_engine):
     update_env_vars()
     tools = [TavilySearchResults(max_results=2)]
 
-    # Only enable Python tool if data exists
-    has_data = "df" in data_engine.scope or "file_content" in data_engine.scope
-    if has_data:
-        def python_wrapper(code: str):
-            return data_engine.run_python_analysis(code)
+    # 🟢 CHANGE: Always enable Python tool (Removed the 'if has_data' check)
+    def python_wrapper(code: str):
+        return data_engine.run_python_analysis(code)
 
-        tools.append(StructuredTool.from_function(
-            func=python_wrapper,
-            name="python_analysis",
-            description="Run Python code.",
-            args_schema=PythonInput
-        ))
+    tools.append(StructuredTool.from_function(
+        func=python_wrapper,
+        name="python_analysis",
+        description="Run Python code. Available libraries: pandas (pd), numpy (np), matplotlib.pyplot (plt), seaborn (sns).",
+        args_schema=PythonInput
+    ))
     return tools
 
 
@@ -81,10 +79,9 @@ def build_agent_graph(data_engine):
     init_keys()
 
     def agent_node(state):
-        # --- STANDARD LLM EXECUTION ---
-        has_data = "df" in data_engine.scope
-        primary_model = MODEL_SMART if has_data else MODEL_FAST
-        models = [primary_model, MODEL_FAST] if primary_model != MODEL_FAST else [MODEL_FAST]
+        # 🟢 CHANGE: Always use Smart Model for coding tasks to ensure quality
+        primary_model = MODEL_SMART
+        models = [MODEL_SMART, MODEL_FAST]
 
         last_error = None
         for model in models:
@@ -99,7 +96,6 @@ def build_agent_graph(data_engine):
                         api_key=key
                     ).bind_tools(tools, parallel_tool_calls=False)
 
-                    # Return the result directly so LangGraph adds it to history
                     return {"messages": [llm.invoke(state["messages"])]}
 
                 except Exception as e:
