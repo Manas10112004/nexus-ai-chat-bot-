@@ -1,7 +1,9 @@
 import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
+import os
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
+from streamlit_mic_recorder import mic_recorder
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -9,8 +11,19 @@ from themes import THEMES, inject_theme_css
 from nexus_engine import DataEngine
 from nexus_brain import build_agent_graph, get_key_status
 
+# --- NEW MODULES ---
+from nexus_security import check_password, logout
+from nexus_report import generate_pdf
+from nexus_voice import transcribe_audio
+
 # --- UI CONFIG ---
 st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
+
+# --- 1. SECURITY GATE ---
+# If not logged in, stop execution here.
+if not check_password():
+    st.stop()
+
 init_db()
 
 # --- INITIALIZE STATE ---
@@ -33,6 +46,29 @@ with st.sidebar:
     st.title("⚙️ NEXUS HQ")
     st.caption(get_key_status())
 
+    # Logout Button
+    if st.button("🔒 Logout", use_container_width=True):
+        logout()
+
+    st.divider()
+
+    # --- 2. VOICE MODE ---
+    st.markdown("### 🎙️ Voice Input")
+    audio = mic_recorder(
+        start_prompt="🎤 Speak",
+        stop_prompt="⏹️ Stop",
+        key='recorder',
+        format="wav",
+        use_container_width=True
+    )
+
+    voice_text = ""
+    if audio:
+        st.info("Transcribing...")
+        voice_text = transcribe_audio(audio['bytes'])
+
+    st.divider()
+
     uploaded_file = st.file_uploader("📂 Upload File", type=None)
     if uploaded_file:
         status = engine.load_file(uploaded_file)
@@ -44,17 +80,26 @@ with st.sidebar:
     if st.button("🧹 Clear Plots"):
         plt.clf()
         engine.latest_figure = None
+        if os.path.exists("temp_chart.png"): os.remove("temp_chart.png")
         st.success("Plots cleared.")
 
     st.divider()
+
+    # --- 3. SMART REPORTING ---
+    st.markdown("### 📄 Reporting")
+    if st.button("📥 Export PDF Report"):
+        history = load_history(current_sess)
+        pdf_file = generate_pdf(history, current_sess)
+        with open(pdf_file, "rb") as f:
+            st.download_button("⬇️ Download PDF", f, file_name=pdf_file)
+
+    st.divider()
+
+    st.markdown("### 🕒 History")
     if st.button("➕ New Chat"):
         st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
         st.rerun()
-    if st.button("🗑️ Clear Chat"):
-        clear_session(current_sess)
-        st.rerun()
 
-    st.markdown("### 🕒 History")
     for s in get_all_sessions()[:5]:
         if st.button(f"{s}", key=s):
             st.session_state.current_session_id = s
@@ -70,8 +115,14 @@ for msg in history:
     with st.chat_message(role, avatar=theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]):
         st.markdown(msg["content"])
 
-# User Input
-if prompt := st.chat_input("Enter command..."):
+# --- INPUT HANDLING (TEXT OR VOICE) ---
+prompt = st.chat_input("Enter command...")
+
+# If voice input exists, override prompt
+if voice_text:
+    prompt = voice_text
+
+if prompt:
     with st.chat_message("user", avatar=theme_data["user_avatar"]):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
@@ -111,35 +162,29 @@ if prompt := st.chat_input("Enter command..."):
         status_box = st.status("Processing...", expanded=True)
         try:
             final_resp = ""
-            # Loop through graph events
             for event in app.stream({"messages": messages}, config={"recursion_limit": 50}, stream_mode="values"):
                 msg = event["messages"][-1]
 
-                # Show Tool Calls
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     for t in msg.tool_calls:
                         status_box.write(f"⚙️ Calling: `{t['name']}`")
 
-                # Show Tool Output (Debug only, usually hidden in final UI)
-                if isinstance(msg, ToolMessage):
-                    status_box.write(f"⚙️ Data Received.")
-
-                # Capture Final AI Response
                 if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
                     final_resp = msg.content
 
-            # 1. Render Chart if exists
+            # 1. Render Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
+                # SAVE CHART FOR PDF
+                engine.latest_figure.savefig("temp_chart.png")
                 engine.latest_figure = None
 
-            # 2. Render Final Text
+            # 2. Render Text
             if final_resp:
                 st.markdown(final_resp)
                 status_box.update(label="Complete", state="complete", expanded=False)
                 save_message(current_sess, "assistant", final_resp)
             else:
-                # Fallback if no final text (rare)
                 status_box.update(label="Complete", state="complete", expanded=False)
 
         except Exception as e:
