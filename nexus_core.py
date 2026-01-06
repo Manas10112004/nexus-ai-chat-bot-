@@ -1,8 +1,9 @@
 import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
+import os
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from groq import Groq
+from streamlit_mic_recorder import mic_recorder
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -10,8 +11,18 @@ from themes import THEMES, inject_theme_css
 from nexus_engine import DataEngine
 from nexus_brain import build_agent_graph, get_key_status
 
+# --- NEW MODULES ---
+from nexus_security import check_password, logout
+from nexus_report import generate_pdf
+from nexus_voice import transcribe_audio
+
 # --- UI CONFIG ---
 st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
+
+# --- 1. SECURITY GATE ---
+if not check_password():
+    st.stop()
+
 init_db()
 
 # --- INITIALIZE STATE ---
@@ -22,7 +33,9 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
-if "last_audio_buffer" not in st.session_state: st.session_state.last_audio_buffer = None
+# Initialize Voice State to prevent loops
+if "last_voice_id" not in st.session_state:
+    st.session_state.last_voice_id = None
 
 # --- BUILD BRAIN ---
 app = build_agent_graph(engine)
@@ -36,10 +49,31 @@ with st.sidebar:
     st.title("⚙️ NEXUS HQ")
     st.caption(get_key_status())
 
-    # --- 🎙️ VOICE INPUT ---
+    if st.button("🔒 Logout", use_container_width=True):
+        logout()
+
     st.divider()
-    st.markdown("### 🎙️ Voice Mode")
-    audio_input = st.audio_input("Record Voice Command")
+
+    # --- 2. VOICE MODE (SMART) ---
+    st.markdown("### 🎙️ Voice Input")
+    audio = mic_recorder(
+        start_prompt="🎤 Speak",
+        stop_prompt="⏹️ Stop",
+        key='recorder',
+        format="wav",
+        use_container_width=True
+    )
+
+    voice_text = ""
+    if audio:
+        # Check if this is a NEW voice command
+        current_audio_id = hash(audio['bytes'])
+        if current_audio_id != st.session_state.last_voice_id:
+            st.info("Transcribing...")
+            voice_text = transcribe_audio(audio['bytes'])
+            st.session_state.last_voice_id = current_audio_id
+
+    st.divider()
 
     uploaded_file = st.file_uploader("📂 Upload File", type=None)
     if uploaded_file:
@@ -52,17 +86,26 @@ with st.sidebar:
     if st.button("🧹 Clear Plots"):
         plt.clf()
         engine.latest_figure = None
+        if os.path.exists("temp_chart.png"): os.remove("temp_chart.png")
         st.success("Plots cleared.")
 
     st.divider()
+
+    # --- 3. SMART REPORTING ---
+    st.markdown("### 📄 Reporting")
+    if st.button("📥 Export PDF Report"):
+        history = load_history(current_sess)
+        pdf_file = generate_pdf(history, current_sess)
+        with open(pdf_file, "rb") as f:
+            st.download_button("⬇️ Download PDF", f, file_name=pdf_file)
+
+    st.divider()
+
+    st.markdown("### 🕒 History")
     if st.button("➕ New Chat"):
         st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
         st.rerun()
-    if st.button("🗑️ Clear Chat"):
-        clear_session(current_sess)
-        st.rerun()
 
-    st.markdown("### 🕒 History")
     for s in get_all_sessions()[:5]:
         if st.button(f"{s}", key=s):
             st.session_state.current_session_id = s
@@ -71,56 +114,35 @@ with st.sidebar:
 # --- CHAT INTERFACE ---
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
+# Load History
 history = load_history(current_sess)
 for msg in history:
     role = "user" if msg["role"] == "user" else "assistant"
     with st.chat_message(role, avatar=theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]):
         st.markdown(msg["content"])
 
-# --- INPUT LOGIC (FIXED) ---
-# 1. Always render the text box so it never disappears
-text_input = st.chat_input("Enter command...")
+# --- INPUT HANDLING (TEXT OR VOICE) ---
+# 1. Always render the input box so it never disappears
+user_input = st.chat_input("Enter command...")
 
-# 2. Determine final prompt (Voice > Text)
 prompt = None
-voice_detected = False
+# 2. Prioritize Voice if a new command just came in, otherwise wait for Text
+if voice_text:
+    prompt = voice_text
+elif user_input:
+    prompt = user_input
 
-# Check Voice (Only if new)
-if audio_input is not None:
-    current_audio_signature = audio_input.getvalue()
-    if current_audio_signature != st.session_state.last_audio_buffer:
-        st.session_state.last_audio_buffer = current_audio_signature
-        try:
-            with st.spinner("🎧 Transcribing..."):
-                client = Groq(api_key=st.secrets["GROQ_API_KEYS"].split(",")[0])
-                transcription = client.audio.transcriptions.create(
-                    file=("audio.wav", audio_input, "audio/wav"),
-                    model="whisper-large-v3-turbo",
-                    response_format="json"
-                )
-                prompt = transcription.text
-                voice_detected = True
-        except Exception as e:
-            st.error(f"Transcription Failed: {e}")
-
-# If no fresh voice command, check if user typed something
-if not prompt and text_input:
-    prompt = text_input
-
-# --- EXECUTION ---
 if prompt:
     with st.chat_message("user", avatar=theme_data["user_avatar"]):
-        if voice_detected:
-            st.markdown(f"🎙️ *{prompt}*")
-        else:
-            st.markdown(prompt)
-
+        st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
+    # Refresh Cheatsheet
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    system_text = "You are Nexus."
+    # --- SYSTEM PROMPT ---
+    system_text = "You are Nexus, an advanced data analysis AI."
     has_data = "df" in engine.scope
     if has_data:
         system_text += f"""
@@ -128,18 +150,16 @@ if prompt:
         1. Variable 'df' is loaded.
         2. VALID COLUMNS: [{engine.column_str}]
 
-        3. ⚠️ MANDATORY TOOL USAGE ⚠️
-           - If user asks for "ANOMALIES" or "OUTLIERS" -> YOU MUST USE: `insights.check_anomalies(df, 'col')`.
-           - If user asks for "FORECAST" or "PREDICT" -> YOU MUST USE: `insights.forecast_series(df, 'date', 'val', 30)`.
-           - If user asks for "DRIVERS" or "CORRELATION" -> YOU MUST USE: `insights.get_correlation_drivers(df, 'target')`.
-
-        4. FOR SIMPLE QUESTIONS:
-           - Use `print()` for numbers.
-           - Use `plt.plot()` for charts.
+        3. INSTRUCTIONS:
+           - When asked for specific insights (Anomalies, Forecasts), prefer using the 'insights' module if applicable.
+           - For general queries, write standard Python code using pandas/matplotlib.
+           - ALWAYS explain the code output to the user clearly. Don't just show the number, interpret it.
+           - If you generate a plot, mention "I have generated a chart above."
         """
     else:
-        system_text += " If no file, use 'tavily'."
+        system_text += " If no file, use 'tavily' for web search."
 
+    # Memory Window
     recent_history = history[-6:]
 
     messages = [SystemMessage(content=system_text)] + \
@@ -147,6 +167,7 @@ if prompt:
                 recent_history] + \
                [HumanMessage(content=prompt)]
 
+    # Run Agent
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
         status_box = st.status("Processing...", expanded=True)
         try:
@@ -154,24 +175,28 @@ if prompt:
             for event in app.stream({"messages": messages}, config={"recursion_limit": 50}, stream_mode="values"):
                 msg = event["messages"][-1]
 
-                if isinstance(msg, ToolMessage):
-                    status_box.write(f"⚙️ Output: {msg.content[:200]}...")
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     for t in msg.tool_calls:
                         status_box.write(f"⚙️ Calling: `{t['name']}`")
-                if isinstance(msg, AIMessage) and msg.content:
-                    final_resp = msg.content
-                    st.markdown(final_resp)
 
+                if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
+                    final_resp = msg.content
+
+            # 1. Render Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
+                # SAVE CHART FOR PDF (Ensure unique name for concurrent users if needed, simplistic here)
+                chart_path = f"chart_{current_sess}.png"
+                engine.latest_figure.savefig(chart_path)
                 engine.latest_figure = None
 
+            # 2. Render Text
             if final_resp:
+                st.markdown(final_resp)
                 status_box.update(label="Complete", state="complete", expanded=False)
                 save_message(current_sess, "assistant", final_resp)
             else:
-                st.error("No response.")
+                status_box.update(label="Complete", state="complete", expanded=False)
 
         except Exception as e:
             status_box.update(label="Error", state="error")
