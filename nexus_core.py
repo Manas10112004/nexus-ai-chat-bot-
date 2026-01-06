@@ -3,8 +3,7 @@ import uuid
 import matplotlib.pyplot as plt
 import os
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-# 🟢 CHANGE: Use the Visualizer Library
-from audio_recorder_streamlit import audio_recorder
+from audio_recorder_streamlit import audio_recorder  # <--- VISUALIZER LIB
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -34,6 +33,7 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
+# Track last voice input to prevent re-processing
 if "last_voice_bytes" not in st.session_state:
     st.session_state.last_voice_bytes = None
 
@@ -56,9 +56,9 @@ with st.sidebar:
 
     # --- 2. VOICE MODE (VISUALIZER) ---
     st.markdown("### 🎙️ Voice Input")
-    st.caption("Click the mic to record. Click again to stop.")
+    st.caption("Click to record. Click again to stop.")
 
-    # 🟢 NEW VISUALIZER COMPONENT
+    # Waveform Recorder
     voice_bytes = audio_recorder(
         text="",
         recording_color="#e8b62c",
@@ -68,8 +68,9 @@ with st.sidebar:
     )
 
     voice_text = ""
+    # Check if we have NEW audio data
     if voice_bytes and voice_bytes != st.session_state.last_voice_bytes:
-        # Show status
+        # Show temporary status
         status_container = st.empty()
         status_container.info("Transcribing...")
 
@@ -161,6 +162,7 @@ if prompt:
         3. Use 'python_analysis' for all data queries.
         """
     else:
+        # Enable Python even without a file (Sandbox Mode)
         system_text += """
         [SANDBOX MODE ACTIVE]
         1. No file loaded.
@@ -183,7 +185,8 @@ if prompt:
         status_box = st.status("Processing...", expanded=True)
         try:
             final_resp = ""
-            for event in app.stream({"messages": messages}, config={"recursion_limit": 50}, stream_mode="values"):
+            # 🟢 RECURSION LIMIT SET TO 10 TO PREVENT LOOPS
+            for event in app.stream({"messages": messages}, config={"recursion_limit": 10}, stream_mode="values"):
                 msg = event["messages"][-1]
 
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:

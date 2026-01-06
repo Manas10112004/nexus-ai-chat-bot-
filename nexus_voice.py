@@ -27,10 +27,12 @@ def transcribe_audio(audio_bytes):
         with open("temp_voice.wav", "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename("temp_voice.wav"), file.read()),
-                # 🛑 CRITICAL FIX: Use the Turbo model
                 model="whisper-large-v3-turbo",
-                # 🛑 CRITICAL FIX: Anti-Hallucination Prompt
-                prompt="User command for data analysis. SQL. Python. Plot. Calculate. No conversation.",
+
+                # 🛑 FIX 1: Change Prompt to a generic example, not an instruction.
+                # This prevents the AI from parroting "SQL. Plot." back to you.
+                prompt="The profit margin for 2024 was ten percent.",
+
                 response_format="json",
                 language="en",
                 temperature=0.0
@@ -38,16 +40,17 @@ def transcribe_audio(audio_bytes):
 
         text = transcription.text.strip()
 
-        # 🛑 CRITICAL FIX: Aggressive Filter List
+        # 🛑 FIX 2: Add known "Prompt Leaks" to the block list
         hallucinations = [
             "Thank you.", "Thank you", "Thanks.", "You",
             "MBC", "Amara.org", "Subtitles by", "Copyright",
             "Thank you for watching", "I'm going to go to sleep",
-            "Bye", "Watching"
+            "Bye", "Watching", "SQL. Plot. Calculate. No conversation.",
+            "User command for data analysis."
         ]
 
-        # Filter logic
-        if any(h.lower() == text.lower() for h in hallucinations) or len(text) < 2:
+        # Filter logic: Block if text is in list OR matches the prompt style
+        if any(h.lower() in text.lower() for h in hallucinations) or len(text) < 2:
             return ""
 
         return text
