@@ -2,7 +2,7 @@ import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from groq import Groq  # Needed for transcription
+from groq import Groq
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -22,7 +22,6 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
-# Track last audio to prevent infinite loops (The Fix)
 if "last_audio_buffer" not in st.session_state: st.session_state.last_audio_buffer = None
 
 # --- BUILD BRAIN ---
@@ -37,7 +36,7 @@ with st.sidebar:
     st.title("⚙️ NEXUS HQ")
     st.caption(get_key_status())
 
-    # --- 🎙️ VOICE INPUT MODULE ---
+    # --- 🎙️ VOICE INPUT ---
     st.divider()
     st.markdown("### 🎙️ Voice Mode")
     audio_input = st.audio_input("Record Voice Command")
@@ -72,30 +71,27 @@ with st.sidebar:
 # --- CHAT INTERFACE ---
 st.title(f"NEXUS // {current_theme.split(' ')[1].upper()}")
 
-# Load History
 history = load_history(current_sess)
 for msg in history:
     role = "user" if msg["role"] == "user" else "assistant"
     with st.chat_message(role, avatar=theme_data["user_avatar"] if role == "user" else theme_data["ai_avatar"]):
         st.markdown(msg["content"])
 
-# --- INPUT LOGIC (Voice vs Text Priority) ---
+# --- INPUT LOGIC (FIXED) ---
+# 1. Always render the text box so it never disappears
+text_input = st.chat_input("Enter command...")
+
+# 2. Determine final prompt (Voice > Text)
 prompt = None
 voice_detected = False
 
-# 1. Check Voice Input (With "Stale" Protection)
+# Check Voice (Only if new)
 if audio_input is not None:
-    # Identify unique signature of this audio (size + id)
-    # Using size is a simple way to detect if it's the *same* recording
     current_audio_signature = audio_input.getvalue()
-
     if current_audio_signature != st.session_state.last_audio_buffer:
-        # IT IS NEW AUDIO! Transcribe it.
         st.session_state.last_audio_buffer = current_audio_signature
-
         try:
             with st.spinner("🎧 Transcribing..."):
-                # Use Groq Whisper (Fast & Free-ish)
                 client = Groq(api_key=st.secrets["GROQ_API_KEYS"].split(",")[0])
                 transcription = client.audio.transcriptions.create(
                     file=("audio.wav", audio_input, "audio/wav"),
@@ -106,13 +102,10 @@ if audio_input is not None:
                 voice_detected = True
         except Exception as e:
             st.error(f"Transcription Failed: {e}")
-    else:
-        # Old audio. Ignore it.
-        pass
 
-# 2. Check Text Input (Only if no *new* voice command)
-if not prompt:
-    prompt = st.chat_input("Enter command...")
+# If no fresh voice command, check if user typed something
+if not prompt and text_input:
+    prompt = text_input
 
 # --- EXECUTION ---
 if prompt:
@@ -124,11 +117,9 @@ if prompt:
 
     save_message(current_sess, "user", prompt)
 
-    # Refresh Cheatsheet
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # --- ADVANCED SYSTEM PROMPT ---
     system_text = "You are Nexus."
     has_data = "df" in engine.scope
     if has_data:
@@ -149,7 +140,6 @@ if prompt:
     else:
         system_text += " If no file, use 'tavily'."
 
-    # Memory Window
     recent_history = history[-6:]
 
     messages = [SystemMessage(content=system_text)] + \
@@ -157,7 +147,6 @@ if prompt:
                 recent_history] + \
                [HumanMessage(content=prompt)]
 
-    # Run Agent
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
         status_box = st.status("Processing...", expanded=True)
         try:
@@ -174,7 +163,6 @@ if prompt:
                     final_resp = msg.content
                     st.markdown(final_resp)
 
-            # Show Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
                 engine.latest_figure = None
