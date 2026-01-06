@@ -2,7 +2,7 @@ import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
 import os
-import io  # --- NEW: For handling byte streams ---
+import io  # <--- REQUIRED for audio handling
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 # --- CUSTOM MODULES ---
@@ -15,7 +15,7 @@ from nexus_brain import build_agent_graph, get_key_status
 from nexus_security import check_password, logout
 from nexus_report import generate_pdf
 from nexus_voice import transcribe_audio
-from streamlit_mic_recorder import mic_recorder  # --- NEW: Import specific recorder ---
+from streamlit_mic_recorder import mic_recorder  # <--- NEW WIDGET
 
 # --- UI CONFIG ---
 st.set_page_config(page_title="Nexus AI", layout="wide", page_icon="⚡")
@@ -51,37 +51,36 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. VOICE MODE (FIXED) ---
+    # --- 2. VOICE MODE (REPAIRED) ---
     st.markdown("### 🎙️ Voice Command")
 
-    # Using streamlit-mic-recorder for "Click -> Speak" flow
-    # This widget returns a dictionary containing audio bytes
-    voice_data = mic_recorder(
+    # We use mic_recorder because the native widget was crashing (as seen in screenshot)
+    # This creates a simple button: Click to Start -> Speak -> Click to Stop
+    audio_data = mic_recorder(
         start_prompt="🎤 Start Recording",
         stop_prompt="⏹️ Stop Recording",
         just_once=True,
         use_container_width=True,
         format="wav",
-        key="voice_recorder"
+        key="recorder"
     )
 
     voice_text = ""
 
-    # Logic to handle recording
-    if voice_data:
-        # We use spinner (transient) instead of status (persistent) to fix the "never stops" bug
+    # Process only if we have bytes
+    if audio_data and audio_data['bytes']:
         with st.spinner("🎧 Processing Voice..."):
-            # Convert raw bytes to a file-like object for the existing transcriber
-            audio_bio = io.BytesIO(voice_data['bytes'])
-            audio_bio.name = "audio.wav"
+            # Create a virtual file from the bytes
+            audio_bio = io.BytesIO(audio_data['bytes'])
+            audio_bio.name = "voice_input.wav"
 
-            # Send to Groq/Whisper
+            # Send to API
             voice_text = transcribe_audio(audio_bio)
 
         if voice_text:
             st.success(f"**Recognized:** \"{voice_text}\"")
         else:
-            st.warning("No speech detected.")
+            st.warning("No speech detected (or audio was too quiet).")
 
     st.divider()
 
