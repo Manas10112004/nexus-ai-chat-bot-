@@ -3,7 +3,8 @@ import uuid
 import matplotlib.pyplot as plt
 import os
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from audio_recorder_streamlit import audio_recorder
+# ✅ REVERTED TO BUTTON LIBRARY
+from streamlit_mic_recorder import mic_recorder
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -33,9 +34,9 @@ if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"Session-{uuid.uuid4().hex[:4]}"
 current_sess = st.session_state.current_session_id
 
-# Track last voice input to prevent re-processing
-if "last_voice_bytes" not in st.session_state:
-    st.session_state.last_voice_bytes = None
+# Voice State Manager
+if "last_voice_id" not in st.session_state:
+    st.session_state.last_voice_id = None
 
 # --- BUILD BRAIN ---
 app = build_agent_graph(engine)
@@ -54,34 +55,39 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. VOICE MODE (VISUALIZER) ---
+    # --- 2. VOICE MODE (BUTTONS RESTORED) ---
     st.markdown("### 🎙️ Voice Input")
-    st.caption("Click to record. Click again to stop.")
 
-    # Waveform Recorder
-    voice_bytes = audio_recorder(
-        text="",
-        recording_color="#e8b62c",
-        neutral_color="#6aa36f",
-        icon_name="microphone",
-        icon_size="2x"
+    # ✅ SIMPLE RECORDER
+    audio = mic_recorder(
+        start_prompt="🎤 Start Recording",
+        stop_prompt="⏹️ Stop Recording",
+        key='recorder',
+        format="wav",
+        use_container_width=True
     )
 
     voice_text = ""
-    # Check if we have NEW audio data
-    if voice_bytes and voice_bytes != st.session_state.last_voice_bytes:
-        # Show temporary status
-        status_container = st.empty()
-        status_container.info("Transcribing...")
+    if audio:
+        # Generate ID to prevent reprocessing same audio
+        current_audio_id = hash(audio['bytes'])
+        if current_audio_id != st.session_state.last_voice_id:
+            # Show status
+            status_container = st.empty()
+            status_container.info("Transcribing...")
 
-        # Transcribe
-        voice_text = transcribe_audio(voice_bytes)
+            # Transcribe
+            voice_text = transcribe_audio(audio['bytes'])
 
-        # Clear status
-        status_container.empty()
+            # Clear status
+            status_container.empty()
 
-        # Update State
-        st.session_state.last_voice_bytes = voice_bytes
+            # Save ID
+            st.session_state.last_voice_id = current_audio_id
+
+    # ✅ DEBUG BOX: Shows what was heard
+    if voice_text:
+        st.success(f"Heard: '{voice_text}'")
 
     st.divider()
 
@@ -132,10 +138,11 @@ for msg in history:
         st.markdown(msg["content"])
 
 # --- INPUT HANDLING ---
+# 1. ALWAYS render the input box so it never disappears
 user_input = st.chat_input("Enter command...")
 
 prompt = None
-# Prioritize Voice if fresh
+# 2. Prioritize Voice if we just transcribed something, otherwise Text
 if voice_text:
     prompt = voice_text
 elif user_input:
@@ -162,7 +169,7 @@ if prompt:
         3. Use 'python_analysis' for all data queries.
         """
     else:
-        # Enable Python even without a file (Sandbox Mode)
+        # Sandbox Mode enabled
         system_text += """
         [SANDBOX MODE ACTIVE]
         1. No file loaded.
@@ -185,7 +192,7 @@ if prompt:
         status_box = st.status("Processing...", expanded=True)
         try:
             final_resp = ""
-            # 🟢 RECURSION LIMIT SET TO 10 TO PREVENT LOOPS
+            # ✅ RECURSION LIMIT 10 (Safety)
             for event in app.stream({"messages": messages}, config={"recursion_limit": 10}, stream_mode="values"):
                 msg = event["messages"][-1]
 

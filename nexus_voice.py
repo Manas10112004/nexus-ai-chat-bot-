@@ -27,9 +27,9 @@ def transcribe_audio(audio_bytes):
         with open("temp_voice.wav", "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(os.path.basename("temp_voice.wav"), file.read()),
-                # Use the working Turbo model
+                # ✅ USE STABLE TURBO MODEL
                 model="whisper-large-v3-turbo",
-                # REMOVED the "prompt" argument to stop it from parroting instructions
+                # ✅ REMOVED THE "PROMPT" THAT CAUSED LOOPS
                 response_format="json",
                 language="en",
                 temperature=0.0
@@ -37,15 +37,15 @@ def transcribe_audio(audio_bytes):
 
         text = transcription.text.strip()
 
-        # Standard "Silence Hallucination" blockers
-        # These are the only things that should be blocked
+        # ✅ MINIMALIST FILTER (Only blocks known glitches)
+        # This ensures we don't accidentally block real words
         hallucinations = [
             "Thank you.", "Thank you", "Thanks.", "You", "MBC",
             "Amara.org", "Subtitles by", "Copyright", "Watching",
             "Thank you for watching"
         ]
 
-        # Simple exact match or "only hallucination" check
+        # Block only if it is EXACTLY a hallucination
         if text in hallucinations or text.lower().startswith("thank you for"):
             return ""
 
