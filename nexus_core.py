@@ -54,8 +54,12 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. VOICE MODE (SMART & CLEAN UI) ---
+    # --- 2. VOICE MODE (FIXED UI) ---
     st.markdown("### 🎙️ Voice Input")
+
+    # Create a container for the status message that we can wipe later
+    status_container = st.empty()
+
     audio = mic_recorder(
         start_prompt="🎤 Speak",
         stop_prompt="⏹️ Stop",
@@ -66,17 +70,15 @@ with st.sidebar:
 
     voice_text = ""
     if audio:
-        # Check if this is a NEW voice command
         current_audio_id = hash(audio['bytes'])
         if current_audio_id != st.session_state.last_voice_id:
-            # 🟢 UI FIX: Use a placeholder container that we can clear
-            status_msg = st.empty()
-            status_msg.info("Transcribing...")
+            # Show "Transcribing" inside the container
+            status_container.info("Transcribing...")
 
             voice_text = transcribe_audio(audio['bytes'])
 
-            # Clear the message immediately after transcription
-            status_msg.empty()
+            # Wipe the container clean immediately
+            status_container.empty()
 
             st.session_state.last_voice_id = current_audio_id
 
@@ -146,7 +148,7 @@ if prompt:
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # --- SYSTEM PROMPT (UPDATED FOR SANDBOX MODE) ---
+    # --- SYSTEM PROMPT ---
     system_text = "You are Nexus, an advanced data analysis AI. You have access to a Python environment."
     has_data = "df" in engine.scope
 
@@ -158,7 +160,6 @@ if prompt:
         3. Use 'python_analysis' for all data queries.
         """
     else:
-        # 🟢 CHANGE: Explicitly allow Python for simulation/plotting
         system_text += """
         [SANDBOX MODE ACTIVE]
         1. No file loaded.
