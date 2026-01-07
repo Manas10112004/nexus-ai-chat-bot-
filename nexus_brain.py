@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
 
 # --- CONFIGURATION ---
+# We prioritize the 70b model for logic, but fallback to 8b if needed
 MODEL_SMART = "llama-3.3-70b-versatile"
 MODEL_FAST = "llama-3.1-8b-instant"
 
@@ -45,29 +46,32 @@ def rotate_groq_key():
 
 
 def get_key_status():
-    return f"Keys: Groq({st.session_state.groq_idx + 1}) | Tavily({st.session_state.tavily_idx + 1})"
+    return f"Active Key: Groq-{st.session_state.groq_idx + 1}"
 
 
 # --- AGENT SETUP ---
 class PythonInput(BaseModel):
-    code: str = Field(description="Python code. Use 'df'.")
+    code: str = Field(description="Python code to execute. Always print output.")
 
 
 def get_tools(data_engine):
     update_env_vars()
-    tools = [TavilySearchResults(max_results=2)]
 
-    # 🟢 CHANGE: Always enable Python tool (Removed the 'if has_data' check)
+    # Tool 1: Web Search
+    search = TavilySearchResults(max_results=2)
+
+    # Tool 2: Python Engine
     def python_wrapper(code: str):
         return data_engine.run_python_analysis(code)
 
-    tools.append(StructuredTool.from_function(
+    python_tool = StructuredTool.from_function(
         func=python_wrapper,
         name="python_analysis",
-        description="Run Python code. Available libraries: pandas (pd), numpy (np), matplotlib.pyplot (plt), seaborn (sns).",
+        description="Executes Python code. Access 'df' (pandas DataFrame). Use plt.show() for plots.",
         args_schema=PythonInput
-    ))
-    return tools
+    )
+
+    return [search, python_tool]
 
 
 # --- AGENT GRAPH ---
@@ -79,39 +83,43 @@ def build_agent_graph(data_engine):
     init_keys()
 
     def agent_node(state):
-        # 🟢 CHANGE: Always use Smart Model for coding tasks to ensure quality
-        primary_model = MODEL_SMART
-        models = [MODEL_SMART, MODEL_FAST]
+        # Try SMART model first, then FAST model
+        models_to_try = [MODEL_SMART, MODEL_FAST]
 
         last_error = None
-        for model in models:
-            for i in range(len(GROQ_KEYS)):
-                try:
-                    tools = get_tools(data_engine)
-                    key = os.environ["GROQ_API_KEY"]
 
-                    llm = ChatGroq(
-                        model=model,
-                        temperature=0.1,
-                        api_key=key
-                    ).bind_tools(tools, parallel_tool_calls=False)
+        for model_name in models_to_try:
+            try:
+                tools = get_tools(data_engine)
+                key = os.environ["GROQ_API_KEY"]
 
-                    return {"messages": [llm.invoke(state["messages"])]}
+                # CRITICAL: parallel_tool_calls=False prevents the "Double Code" bug
+                llm = ChatGroq(
+                    model=model_name,
+                    temperature=0.0,
+                    api_key=key
+                ).bind_tools(tools, parallel_tool_calls=False)
 
-                except Exception as e:
-                    last_error = e
-                    if "429" in str(e) or "Rate limit" in str(e):
-                        rotate_groq_key();
-                        continue
-                    elif "400" in str(e):
-                        continue
-                    break
+                response = llm.invoke(state["messages"])
+                return {"messages": [response]}
 
-        return {"messages": [AIMessage(content=f"❌ System Exhausted. Error: {str(last_error)}")], "final": True}
+            except Exception as e:
+                # If it's a Rate Limit (429), rotate key and retry SAME model
+                if "429" in str(e) or "Rate limit" in str(e):
+                    rotate_groq_key()
+                    continue
+
+                    # If it's a Model Overload (503/500), try NEXT model
+                last_error = e
+                continue
+
+        # If all fail
+        return {"messages": [AIMessage(content=f"❌ System Busy. Error: {str(last_error)}")]}
 
     workflow = StateGraph(AgentState)
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", ToolNode(get_tools(data_engine)))
+
     workflow.add_edge(START, "agent")
     workflow.add_conditional_edges("agent", tools_condition)
     workflow.add_edge("tools", "agent")
