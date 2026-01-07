@@ -2,7 +2,7 @@ import streamlit as st
 import uuid
 import matplotlib.pyplot as plt
 import os
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 # --- CUSTOM MODULES ---
 from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
@@ -10,7 +10,7 @@ from themes import THEMES, inject_theme_css
 from nexus_engine import DataEngine
 from nexus_brain import build_agent_graph, get_key_status
 
-# --- NEW MODULES ---
+# --- MODULES ---
 from nexus_security import check_password, logout
 from nexus_report import generate_pdf
 
@@ -48,11 +48,9 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 2. DATA CENTER (Clean & Focused) ---
-    st.markdown("### 📂 Data Center")
-    uploaded_file = st.file_uploader("Upload Dataset", type=['csv', 'xlsx', 'xls', 'json'],
-                                     help="Supported: CSV, Excel, JSON")
-
+    # --- 2. DATA MANAGEMENT ---
+    st.markdown("### 📂 Data Workspace")
+    uploaded_file = st.file_uploader("Upload CSV/Excel", type=None)
     if uploaded_file:
         status = engine.load_file(uploaded_file)
         if "Error" in status:
@@ -68,7 +66,7 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 3. REPORTING ---
+    # --- 3. SMART REPORTING ---
     st.markdown("### 📄 Reporting")
     if st.button("📥 Export PDF Report", use_container_width=True):
         with st.spinner("Compiling PDF..."):
@@ -90,7 +88,6 @@ with st.sidebar:
             clear_session(current_sess)
             st.rerun()
 
-    # List recent sessions
     st.caption("Recent Sessions:")
     for s in get_all_sessions()[:5]:
         if st.button(f"📂 {s}", key=s, use_container_width=True):
@@ -108,19 +105,16 @@ for msg in history:
         st.markdown(msg["content"])
 
 # --- INPUT HANDLING ---
-prompt = st.chat_input("Enter analysis command...")
-
-if prompt:
-    # 1. UI Echo
+if prompt := st.chat_input("Enter command..."):
     with st.chat_message("user", avatar=theme_data["user_avatar"]):
         st.markdown(prompt)
     save_message(current_sess, "user", prompt)
 
-    # 2. Refresh Context
+    # Refresh Cheatsheet
     if engine.df is not None and not engine.column_str:
         engine.column_str = ", ".join(list(engine.df.columns))
 
-    # 3. Construct System Prompt (Optimized for Tokens)
+    # --- SYSTEM PROMPT ---
     system_text = "You are Nexus, an advanced data analysis AI. You have access to a Python environment."
     has_data = "df" in engine.scope
 
@@ -129,10 +123,7 @@ if prompt:
         [DATA MODE ACTIVE]
         1. Variable 'df' is loaded.
         2. VALID COLUMNS: [{engine.column_str}]
-        3. RULES:
-           - Plan your step before writing code.
-           - Use 'python_analysis' for all data queries.
-           - When plotting, ALWAYS ensure the figure is created.
+        3. Use 'python_analysis' for all data queries.
         """
     else:
         system_text += """
@@ -144,44 +135,43 @@ if prompt:
         3. If asked for real-world facts/news, use 'tavily'.
         """
 
-    # 4. Context Window (Reduced to prevent 413 Errors)
-    recent_history = history[-2:]
+    # Memory Window
+    recent_history = history[-6:]
 
     messages = [SystemMessage(content=system_text)] + \
                [HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"]) for m in
                 recent_history] + \
                [HumanMessage(content=prompt)]
 
-    # 5. Run Agent
+    # Run Agent
     with st.chat_message("assistant", avatar=theme_data["ai_avatar"]):
-        status_box = st.status("Thinking...", expanded=True)
+        status_box = st.status("Processing...", expanded=True)
         try:
             final_resp = ""
-            # Stream the graph events with INCREASED recursion limit
-            for event in app.stream({"messages": messages}, config={"recursion_limit": 60}, stream_mode="values"):
+            for event in app.stream({"messages": messages}, config={"recursion_limit": 10}, stream_mode="values"):
                 msg = event["messages"][-1]
 
                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                     for t in msg.tool_calls:
-                        status_box.write(f"⚙️ Action: `{t['name']}`")
+                        status_box.write(f"⚙️ Calling: `{t['name']}`")
 
                 if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
                     final_resp = msg.content
 
-            # A. Render Chart (if generated)
+            # 1. Render Chart
             if engine.latest_figure:
                 st.pyplot(engine.latest_figure)
                 chart_path = f"chart_{current_sess}.png"
                 engine.latest_figure.savefig(chart_path)
                 engine.latest_figure = None
 
-            # B. Render Text Response
+            # 2. Render Text
             if final_resp:
                 st.markdown(final_resp)
                 status_box.update(label="Complete", state="complete", expanded=False)
                 save_message(current_sess, "assistant", final_resp)
             else:
-                status_box.update(label="Task Completed", state="complete", expanded=False)
+                status_box.update(label="Complete", state="complete", expanded=False)
 
         except Exception as e:
             status_box.update(label="Error", state="error")
