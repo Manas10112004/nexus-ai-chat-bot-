@@ -1,113 +1,101 @@
 import streamlit as st
 
-# --- THEME DEFINITIONS ---
+# --- PROFESSIONAL THEME DEFINITION ---
 THEMES = {
-    "🌿 Eywa (Avatar)": {
-        "primary": "#00e5ff",
-        "secondary": "#7c4dff",
-        "bg_color": "#050a0e",
-        "bg_gradient": "linear-gradient(to top, #0f2027, #203a43, #050a0e)",
-        "sidebar_bg": "#020406",
-        "font_header": "sans-serif",
-        "font_body": "sans-serif",
-        "user_avatar": "🧑‍🚀",
-        "ai_avatar": "🧬"
-    },
-    "🚕 Bumblebee": {
-        "primary": "#FFD700",
-        "secondary": "#000000",
-        "bg_color": "#050505",
-        "bg_gradient": "radial-gradient(circle at 50% 50%, #1a1a1a 1px, transparent 1px)",
-        "sidebar_bg": "#111111",
-        "font_header": "monospace",
-        "font_body": "monospace",
-        "user_avatar": "👤",
-        "ai_avatar": "🚕"
-    },
-    "🔵 Jarvis": {
-        "primary": "#00a8ff",
-        "secondary": "#005073",
-        "bg_color": "#000000",
-        "bg_gradient": "radial-gradient(circle at center, #001f3f 0%, #000000 100%)",
-        "sidebar_bg": "#000810",
-        "font_header": "sans-serif",
-        "font_body": "sans-serif",
-        "user_avatar": "🤵",
-        "ai_avatar": "💿"
-    },
-    "🏴‍☠️ One Piece": {
-        "primary": "#FF4500",
-        "secondary": "#FFD700",
-        "bg_color": "#001a33",
-        "bg_gradient": "linear-gradient(135deg, #001a33 0%, #004080 100%)",
-        "sidebar_bg": "#000d1a",
-        "font_header": "serif",
-        "font_body": "sans-serif",
-        "user_avatar": "🍖",
-        "ai_avatar": "🏴‍☠️"
-    },
-    "🥋 Dragon Ball": {
-        "primary": "#FF8C00",
-        "secondary": "#0057B7",
-        "bg_color": "#1a0b00",
-        "bg_gradient": "linear-gradient(to bottom right, #ffbb00, #ff8c00, #1a0b00)",
-        "sidebar_bg": "#1a0b00",
-        "font_header": "sans-serif",
-        "font_body": "sans-serif",
-        "user_avatar": "🥡",
-        "ai_avatar": "🐉"
-    },
-    "☣️ Overflow": {
-        "primary": "#ff00ff",
-        "secondary": "#00ff00",
-        "bg_color": "#000000",
-        "bg_gradient": "repeating-linear-gradient(45deg, #000 0, #000 10px, #111 10px, #111 20px)",
-        "sidebar_bg": "#050505",
-        "font_header": "monospace",
-        "font_body": "monospace",
-        "user_avatar": "💀",
-        "ai_avatar": "👁️"
+    "Nexus Enterprise": {
+        "primary": "#3B82F6",  # Professional Royal Blue
+        "background": "#0E1117",  # Deep Charcoal (Standard Streamlit Dark)
+        "sidebar": "#161B22",  # Slightly lighter dark for sidebar
+        "text": "#F3F4F6",  # Off-white for readability
+        "user_avatar": "🧑‍💼",  # Professional User Icon
+        "ai_avatar": "⚡",  # Minimalist AI Icon
+        "font": "sans-serif"
     }
 }
 
 
 def inject_theme_css(theme_name):
-    # Fallback safety
-    if theme_name not in THEMES:
-        theme_name = "🌿 Eywa (Avatar)"
-    t = THEMES[theme_name]
+    """Injects professional CSS styles into the app."""
+    theme = THEMES.get(theme_name, THEMES["Nexus Enterprise"])
 
-    # We construct the CSS string here to avoid syntax errors
-    css_code = f"""
+    css = f"""
     <style>
+        /* 1. MAIN CONTAINER & FONT */
         .stApp {{
-            background-color: {t['bg_color']};
-            background-image: {t['bg_gradient']};
-            color: #e0e0e0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: {theme['text']};
         }}
+
+        /* 2. SIDEBAR STYLING */
         [data-testid="stSidebar"] {{
-            background-color: {t['sidebar_bg']};
-            border-right: 1px solid {t['primary']};
+            background-color: {theme['sidebar']};
+            border-right: 1px solid #30363D;
         }}
+
+        [data-testid="stSidebar"] h1 {{
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #FFFFFF;
+            letter-spacing: -0.5px;
+            margin-bottom: 1rem;
+        }}
+
+        [data-testid="stSidebar"] p, [data-testid="stSidebar"] label {{
+            color: #8B949E; /* Muted text for sidebar labels */
+            font-size: 0.85rem;
+            font-weight: 500;
+        }}
+
+        /* 3. BUTTONS (SaaS Style) */
+        .stButton button {{
+            background-color: {theme['primary']};
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            padding: 0.5rem 1rem;
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }}
+
+        .stButton button:hover {{
+            background-color: #2563EB; /* Slightly darker blue on hover */
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            transform: translateY(-1px);
+        }}
+
+        /* Secondary/Outline Buttons (if any) */
+        div[data-testid="stForm"] .stButton button {{
+             width: 100%;
+        }}
+
+        /* 4. CHAT MESSAGE STYLING */
+        /* User Message Bubble */
+        [data-testid="stChatMessage"]:nth-child(odd) {{
+            background-color: transparent;
+        }}
+
+        /* AI Message Bubble (Subtle highlight) */
+        [data-testid="stChatMessage"]:nth-child(even) {{
+            background-color: #161B22;
+            border: 1px solid #30363D;
+            border-radius: 8px;
+            padding: 1rem;
+        }}
+
+        /* 5. METRIC CARDS & HEADERS */
         h1, h2, h3 {{
-            color: {t['primary']} !important;
-            text-shadow: 0px 0px 10px {t['primary']}80;
-            font-family: {t['font_header']} !important;
+            color: #FFFFFF;
+            font-weight: 700;
+            letter-spacing: -0.5px;
         }}
-        .stButton > button {{
-            border: 1px solid {t['primary']};
-            color: {t['primary']};
-            background: transparent;
+
+        /* 6. STATUS CONTAINERS (Success, Error, Info) */
+        .stAlert {{
+            border-radius: 6px;
+            border: 1px solid #30363D;
         }}
-        .stButton > button:hover {{
-            background: {t['primary']};
-            color: {t['bg_color']};
-        }}
-        .stTextInput > div {{
-            border-radius: 5px;
-            border: 1px solid {t['secondary']};
-        }}
+
     </style>
     """
-
-    st.markdown(css_code, unsafe_allow_html=True)
+    st.markdown(css, unsafe_allow_html=True)
