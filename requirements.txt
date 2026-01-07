@@ -16,3 +16,7 @@ statsmodels
 scikit-learn
 pytest
 bcrypt
+PyPDF2
+python-docx
+faiss-cpu
+sentence-transformers

@@ -5,7 +5,8 @@ import os
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # --- CUSTOM MODULES ---
-from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting
+from nexus_db import init_db, save_message, load_history, clear_session, get_all_sessions, save_setting, load_setting, \
+    get_user_plan
 from themes import THEMES, inject_theme_css
 from nexus_engine import DataEngine
 from nexus_brain import build_agent_graph, get_key_status
@@ -28,14 +29,17 @@ if "data_engine" not in st.session_state: st.session_state.data_engine = DataEng
 engine = st.session_state.data_engine
 
 # --- MULTI-USER SESSION MANAGEMENT ---
-# Grab the logged-in username
 current_user = st.session_state.get("username", "guest")
 
-# Prefix session ID with username to enforce data privacy
+# [NEW] Load User Plan
+if "user_plan" not in st.session_state:
+    st.session_state.user_plan = get_user_plan(current_user)
+user_plan = st.session_state.user_plan
+
+# Prefix session ID with username
 if "current_session_id" not in st.session_state:
     st.session_state.current_session_id = f"{current_user}-Session-{uuid.uuid4().hex[:4]}"
 
-# Safety check: If user switched accounts, reset session
 if not st.session_state.current_session_id.startswith(f"{current_user}-"):
     st.session_state.current_session_id = f"{current_user}-Session-{uuid.uuid4().hex[:4]}"
 
@@ -45,16 +49,22 @@ current_sess = st.session_state.current_session_id
 app = build_agent_graph(engine)
 
 # --- SIDEBAR & THEME ---
-# [FIX] Default to the professional theme
 current_theme = load_setting("theme", "Nexus Enterprise")
 inject_theme_css(current_theme)
-
-# [FIX] Use the safe fallback if theme loading fails
 theme_data = THEMES.get(current_theme, THEMES["Nexus Enterprise"])
 
 with st.sidebar:
     st.title("⚡ NEXUS HQ")
     st.write(f"👤 **User:** {current_user}")
+
+    # [NEW] Plan Status Indicator
+    if user_plan == "pro":
+        st.success("🌟 Pro Plan Active")
+    else:
+        st.info("📦 Free Plan")
+        if st.button("🚀 Upgrade to Pro", use_container_width=True):
+            st.markdown("[Click here to Upgrade](https://your-stripe-link.com)")
+
     st.caption(get_key_status())
 
     if st.button("🔒 Logout", use_container_width=True):
@@ -64,8 +74,25 @@ with st.sidebar:
 
     # --- 2. DATA CENTER ---
     st.markdown("### 📂 Data Center")
-    uploaded_file = st.file_uploader("Upload Dataset", type=['csv', 'xlsx', 'xls', 'json'],
-                                     help="Supported: CSV, Excel, JSON")
+
+    # [NEW] Conditional File Uploader
+    allowed_types = ['csv', 'xlsx', 'xls', 'json']
+    file_help_text = "Supported: CSV, Excel, JSON"
+
+    if user_plan == "pro":
+        allowed_types.extend(['pdf', 'docx'])
+        file_help_text += ", PDF, DOCX (Pro)"
+
+    uploaded_file = st.file_uploader("Upload Dataset", type=allowed_types, help=file_help_text)
+
+    # [NEW] Google Sheet Input (Pro Only)
+    if user_plan == "pro":
+        gsheet_url = st.text_input("🔗 Google Sheet URL", placeholder="Paste 'Anyone with link' URL")
+        if gsheet_url and st.button("Load Sheet"):
+            # Placeholder for Sheet Logic (will implement in Engine next)
+            st.info(f"Loading Sheet: {gsheet_url}...")
+    else:
+        st.text_input("🔗 Google Sheet URL", placeholder="🔒 Upgrade to Pro to use", disabled=True)
 
     if uploaded_file:
         status = engine.load_file(uploaded_file)
@@ -104,7 +131,7 @@ with st.sidebar:
             clear_session(current_sess)
             st.rerun()
 
-    # List recent sessions (Filtered by User)
+    # List recent sessions
     st.caption("Recent Sessions:")
     my_sessions = [s for s in get_all_sessions() if s.startswith(f"{current_user}-")]
 

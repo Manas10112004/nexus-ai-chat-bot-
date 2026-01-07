@@ -26,7 +26,14 @@ def create_user(username, password):
 
     # 2. Create new user
     hashed = hash_password(password)
-    data = {"username": username, "password_hash": hashed}
+
+    # [UPDATED] Include default plan_type
+    data = {
+        "username": username,
+        "password_hash": hashed,
+        "plan_type": "free"
+    }
+
     try:
         supabase.table("users").insert(data).execute()
         return True, "Account created! You can now log in."

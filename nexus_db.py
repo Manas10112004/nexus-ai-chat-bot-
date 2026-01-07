@@ -1,7 +1,6 @@
 import streamlit as st
 from supabase import create_client, Client
 
-
 # --- CONNECTION MANAGER ---
 @st.cache_resource
 def get_supabase_client() -> Client:
@@ -81,6 +80,28 @@ def get_all_sessions():
             seen.add(sid)
 
     return unique_sessions
+
+
+# --- [NEW] USER PLAN MANAGEMENT ---
+
+def get_user_plan(username):
+    """Fetches the user's plan type (free/pro). Defaults to free."""
+    client = get_supabase_client()
+    try:
+        response = client.table("users").select("plan_type").eq("username", username).execute()
+        if response.data:
+            return response.data[0].get("plan_type", "free")
+        return "free"
+    except Exception:
+        return "free"
+
+
+def update_user_plan(username, new_plan):
+    """Updates the user's plan (e.g., after payment)."""
+    client = get_supabase_client()
+    client.table("users").update({"plan_type": new_plan}).eq("username", username).execute()
+
+# ----------------------------------
 
 
 # --- SETTINGS MANAGEMENT ---
