@@ -14,7 +14,3 @@ tabulate
 langchain_experimental
 statsmodels
 scikit-learn
-streamlit-mic-recorder
-fpdf
-audio-recorder-streamlit
-streamlit-mic-recorder
