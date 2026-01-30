@@ -43,3 +43,9 @@ A **modular AI-powered chatbot** built with **Streamlit, LangChain, Groq API, an
 ├── themes.py                  # UI theme definitions
 ├── requirements.txt           # Python dependencies
 └── README.md                 # This documentation
+
+##ENV file format
+SUPABASE_URL :"database url"
+SUPABASE_KEY :"your database api key"
+TAVILY_API_KEYS:"your tavily key"
+GROQ_API_KEYS:"your api keys"
